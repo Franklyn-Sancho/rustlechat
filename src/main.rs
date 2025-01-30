@@ -4,6 +4,7 @@ mod models;
 mod services;
 mod database;
 mod routes;
+mod websocket;
 
 use database::init::init_db;
 use routes::app_routes::create_router;

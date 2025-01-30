@@ -3,9 +3,7 @@ use hyper::StatusCode;
 use serde::Deserialize;
 use tracing::debug;
 use uuid::Uuid;
-use crate::{models::{chat::{CreateChatData, CreateChatRequest}, message::SendMessageRequest}, services::chat_service};
-
-use super::websocker_handlers::AppState;
+use crate::{models::{chat::{CreateChatData, CreateChatRequest}, message::SendMessageRequest}, services::chat_service, websocket::types::AppState};
 
 
 pub async fn create_chat(
@@ -13,11 +11,11 @@ pub async fn create_chat(
     Extension(user_id): Extension<String>, 
     Json(payload): Json<CreateChatRequest>,
 ) -> impl IntoResponse {
-    let user_id = Uuid::parse_str(&user_id).expect("User should be authenticated"); // <- Converts to Uuid
+    let user_id = Uuid::parse_str(&user_id).expect("User should be authenticated");
 
-    println!("Creating chat: user_id = {}, name = {:?}", user_id, payload.name);
+    println!("Creating chat: user_id = {}, name = {:?}, invitees = {:?}", user_id, payload.name, payload.invitees);
 
-    let chat = chat_service::create_chat(state.db.clone(), user_id, payload.name).await;
+    let chat = chat_service::create_chat(state.db.clone(), user_id, payload.name, payload.invitees).await;
 
     match chat {
         Ok(chat) => {

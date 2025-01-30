@@ -4,10 +4,8 @@ use tokio_postgres::Client;
 
 use crate::{
     models::user::{LoginData, RegisterData},
-    services::auth_service,
+    services::auth_service, websocket::types::AppState,
 };
-
-use super::websocker_handlers::AppState;
 
 pub async fn register(
     Extension(state): Extension<AppState>,  // Receives AppState now

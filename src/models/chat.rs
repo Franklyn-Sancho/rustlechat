@@ -13,9 +13,11 @@ pub struct Chat {
 pub struct CreateChatData {
     #[validate(length(min = 1, max = 50, message = "The chat must be between 1 and 59 characters long"))]
     pub name: Option<String>,
+    
 }
 
 #[derive(Deserialize)]
 pub struct CreateChatRequest {
     pub name: Option<String>,
+    pub invitees: Option<Vec<String>>, // Alterado para Vec<String>
 }

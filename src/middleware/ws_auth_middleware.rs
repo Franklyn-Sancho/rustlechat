@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tracing::{info, error};
 use uuid::Uuid;
 
-use crate::{handlers::websocker_handlers::{handle_websocket, AppState}, services::auth_service::verify_session};
+use crate::{services::auth_service::verify_session, websocket::types::AppState};
 
 #[derive(Deserialize, Debug)]
 pub struct WebSocketParams {
