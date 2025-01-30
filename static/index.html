@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste WebSocket</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 50px; }
+        input, button { padding: 10px; margin: 10px; }
+        #messages { border: 1px solid #ddd; padding: 10px; min-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h2>Teste de WebSocket</h2>
+    <input type="text" id="message" placeholder="Digite uma mensagem">
+    <button onclick="sendMessage()">Enviar</button>
+    <div id="messages"></div>
+    
+    <script>
+        const token = "SEU_TOKEN_AQUI"; // Substitua pelo token válido
+        const chatId = "SEU_CHAT_ID";   // Substitua pelo chat_id válido
+        const ws = new WebSocket(`ws://localhost:3000/ws?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkNmY4ODI3Zi1kYjc4LTQwMGQtYmUyYS04MDc5ZjI2ZjFhNjIiLCJleHAiOjE3MzgzMjkyNjl9.ZsW5AsW9hNpjC6u6lsXGkLPvwse1I7SWh8X9CXZlxVM&chat_id=94ea1f39-8757-4def-b5d8-c6bc6f49ea47`);
+        
+        ws.onopen = () => {
+            console.log("Conectado ao WebSocket");
+            document.getElementById("messages").innerHTML += "<p><strong>Conectado!</strong></p>";
+        };
+        
+        ws.onmessage = (event) => {
+            document.getElementById("messages").innerHTML += `<p>${event.data}</p>`;
+        };
+        
+        ws.onclose = () => {
+            console.log("Conexão encerrada");
+            document.getElementById("messages").innerHTML += "<p><strong>Conexão fechada!</strong></p>";
+        };
+        
+        function sendMessage() {
+            let msg = document.getElementById("message").value;
+            if (msg) {
+                ws.send(msg);
+                document.getElementById("messages").innerHTML += `<p><strong>Você:</strong> ${msg}</p>`;
+                document.getElementById("message").value = "";
+            }
+        }
+    </script>
+</body>
+</html>
