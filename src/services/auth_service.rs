@@ -8,7 +8,7 @@ use tokio_postgres::Client;
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::models::user::{Claims, LoginData, RegisterData};
+use crate::{database::init::DbClient, models::user::{Claims, LoginData, RegisterData}};
 
 use super::jwt_service::create_jwt;
 
@@ -159,5 +159,23 @@ pub async fn verify_session(db: Arc<Client>, token: &str) -> Result<Uuid, Status
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+pub async fn get_username(db: &DbClient, user_id: Uuid) -> Result<String, String> {
+    // Query para buscar o username
+    let query = "SELECT username FROM users WHERE id = $1";
+    
+    // Execute a query usando o cliente do postgres
+    let row = db
+        .query_one(query, &[&user_id])
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    // Extraia o username da row
+    let username: String = row
+        .try_get(0)
+        .map_err(|e| format!("Failed to get username: {}", e))?;
+
+    Ok(username)
 }
 

@@ -3,8 +3,7 @@ use std::sync::Arc;
 use tokio_postgres::Client;
 
 use crate::{
-    models::user::{LoginData, RegisterData},
-    services::auth_service, websocket::types::AppState,
+    app_state::AppState, models::user::{LoginData, RegisterData}, services::auth_service
 };
 
 pub async fn register(

@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::Client;
 use uuid::Uuid;
+
+use crate::models::invitation::InvitationNotification;
 
 use super::connection_manager::ConnectionManager;
 
@@ -12,14 +15,16 @@ pub enum WebSocketMessage {
     Chat(ChatMessage),
     Status(StatusMessage),
     Error(ErrorMessage),
+    Invitation(InvitationNotification),
 }
 
-#[derive(Clone)]
+/* #[derive(Clone)]
 pub struct AppState {
     pub connections: ConnectionManager,
     pub db: Arc<Client>,
+    pub auth_service: Arc<AuthService>,
     pub current_user_id: Option<Uuid>,
-}
+} */
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
@@ -27,7 +32,7 @@ pub struct ChatMessage {
     pub chat_id: Uuid,
     pub sender_id: Uuid,
     pub content: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub timestamp: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -37,9 +42,10 @@ pub struct ChatMessageResponse {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StatusMessage {
+    pub chat_id: Uuid,
     pub user_id: Uuid,
     pub status: UserStatus,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub timestamp: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -48,6 +54,7 @@ pub enum UserStatus {
     Offline,
     Typing,
     Idle,
+    Joined
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

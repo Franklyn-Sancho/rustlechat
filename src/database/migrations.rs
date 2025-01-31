@@ -1,7 +1,5 @@
 use tokio_postgres::Client;
 
-
-
 // This function applies database migrations, such as creating the database and tables.
 pub async fn apply_migrations(client: &Client) -> Result<(), String> {
     // Create the database if it does not exist
@@ -107,7 +105,24 @@ async fn create_tables(client: &Client) -> Result<(), String> {
         .await
         .map_err(|e| format!("Error creating sessions table: {}", e))?;
 
+    // Create the 'invites' table for managing chat invitations
+    let create_invites_table_query = "
+       CREATE TABLE IF NOT EXISTS invites (
+            id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+            chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            inviter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            invitee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending', -- 'pending', 'accepted', 'rejected'
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+
+    ";
+    client
+        .execute(create_invites_table_query, &[])
+        .await
+        .map_err(|e| format!("Error creating invites table: {}", e))?;
+
     Ok(())
 }
-
-
