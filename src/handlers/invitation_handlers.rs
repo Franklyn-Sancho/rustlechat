@@ -4,16 +4,17 @@ use hyper::StatusCode;
 use uuid::Uuid;
 
 use crate::{
-    app_state::AppState, database::init::DbClient, models::invitation::{
-        AcceptInviteRequest, DeclineInviteRequest, InvitationNotification, InvitationResponse,
-        SendInvitationRequest,
-    }, services::{
+    app_state::AppState,
+    database::init::DbClient,
+    models::invitation::{InvitationNotification, InvitationResponse},
+    services::{
         auth_service::get_username,
-        invitation_service::{self, create_invitation, update_invitation_status},
-    }, websocket::{
+        invitation_service::update_invitation_status,
+    },
+    websocket::{
         connection_manager::ConnectionManager,
         types::{StatusMessage, UserStatus, WebSocketMessage},
-    }
+    },
 };
 
 pub async fn respond_to_invitation(
@@ -24,9 +25,27 @@ pub async fn respond_to_invitation(
     let user_id = Uuid::parse_str(&user_id).unwrap();
     let invitation_id = payload.invitation_id;
 
+    // Update the invitation status in the `invites` table
     match update_invitation_status(&state.db, invitation_id, user_id, payload.accept).await {
         Ok(invitation) => {
             if payload.accept {
+                // Insert the new member into the `chat_members` table
+                let insert_query = "
+                    INSERT INTO chat_members (chat_id, user_id, status, is_creator)
+                    VALUES ($1, $2, 'accepted', false)
+                ";
+                if let Err(e) = state
+                    .db
+                    .execute(insert_query, &[&invitation.chat_id, &user_id])
+                    .await
+                {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to add user to chat_members: {}", e),
+                    ));
+                }
+
+                // Add the user to the in-memory connection (for WebSocket)
                 if let Ok(_) = state
                     .connections
                     .add_user_to_chat(invitation.chat_id, user_id)
@@ -38,7 +57,6 @@ pub async fn respond_to_invitation(
                         status: UserStatus::Joined,
                         timestamp: Utc::now().naive_utc(),
                     });
-
                     let _ = state
                         .connections
                         .broadcast_to_chat(invitation.chat_id, user_id, notification)
@@ -82,9 +100,9 @@ pub async fn send_invitation_helper(
 
     let invitation_id = Uuid::new_v4();
     let query = "
-    INSERT INTO invites (id, chat_id, inviter_id, invitee_id, status, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-";
+        INSERT INTO invites (id, chat_id, inviter_id, invitee_id, status, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ";
 
     if let Err(e) = db
         .execute(
@@ -115,7 +133,10 @@ pub async fn send_invitation_helper(
         });
 
         if let Err(e) = connections.send_direct_message(user.id, notification).await {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Error sending WebSocket notification: {}", e)));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error sending WebSocket notification: {}", e),
+            ));
         }
     }
 
@@ -130,4 +151,5 @@ pub async fn get_user_id_by_username(db: &DbClient, username: &str) -> Option<Uu
         Err(_) => None,
     }
 }
+
 

@@ -4,11 +4,7 @@ use chrono::{NaiveDateTime, Utc};
 use tokio_postgres::Client;
 use uuid::Uuid;
 
-use crate::{
-    database::init::DbClient,
-    handlers::invitation_handlers::get_user_id_by_username,
-    models::invitation::{ChatInvitation, InvitationStatus},
-};
+use crate::models::invitation::{ChatInvitation, InvitationStatus};
 
 impl std::fmt::Display for InvitationStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -25,43 +21,6 @@ impl std::fmt::Display for InvitationStatus {
     }
 }
 
-pub async fn create_invitation(
-    db: &DbClient,
-    chat_id: Uuid,
-    inviter_id: Uuid,
-    invitee_id: Uuid,
-) -> Result<ChatInvitation, String> {
-    let now = Utc::now().naive_utc();
-
-    let invitation = ChatInvitation {
-        id: Uuid::new_v4(),
-        chat_id,
-        inviter_id,
-        invitee_id,
-        status: InvitationStatus::Pending.to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-
-    db.execute(
-        "INSERT INTO invites 
-         (id, chat_id, inviter_id, invitee_id, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        &[
-            &invitation.id,
-            &invitation.chat_id,
-            &invitation.inviter_id,
-            &invitation.invitee_id,
-            &"pending",
-            &invitation.created_at,
-            &invitation.updated_at,
-        ],
-    )
-    .await
-    .map_err(|e| format!("Failed to create invitation: {}", e))?;
-
-    Ok(invitation)
-}
 
 pub async fn update_invitation_status(
     db: &Arc<Client>,

@@ -17,8 +17,8 @@ pub struct ChatInvitation {
     pub inviter_id: Uuid,
     pub invitee_id: Uuid,
     pub status: String,
-    pub created_at: NaiveDateTime, // Alterado para NaiveDateTime
-    pub updated_at: NaiveDateTime, // Alterado para NaiveDateTime
+    pub created_at: NaiveDateTime, 
+    pub updated_at: NaiveDateTime, 
 }
 
 
@@ -44,10 +44,6 @@ pub struct InvitationResponse {
 
 #[derive(Serialize, Deserialize)]
 pub struct DeclineInviteRequest {
-    pub chat_id: Uuid, // ID do chat que o usuário está recusando o convite
-}
-
-pub struct AcceptInviteRequest {
-    pub chat_id: Uuid, // ID do chat que o usuário está aceitando o convite
+    pub chat_id: Uuid, 
 }
 

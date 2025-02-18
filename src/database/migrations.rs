@@ -68,8 +68,10 @@ async fn create_tables(client: &Client) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS chat_members (
             chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
             user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL,  -- Pode ser 'pending', 'accepted', etc.
+            is_creator BOOLEAN NOT NULL DEFAULT FALSE,
             PRIMARY KEY (chat_id, user_id)
-        )
+        );
     ";
     client
         .execute(create_chat_members_table_query, &[])

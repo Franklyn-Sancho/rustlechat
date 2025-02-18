@@ -1,6 +1,4 @@
 use axum::{debug_handler, response::IntoResponse, Extension, Json};
-use std::sync::Arc;
-use tokio_postgres::Client;
 
 use crate::{
     app_state::AppState, models::user::{LoginData, RegisterData}, services::auth_service

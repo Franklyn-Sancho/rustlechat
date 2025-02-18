@@ -1,20 +1,18 @@
 use std::sync::Arc;
-
 use tokio_postgres::Client;
 use uuid::Uuid;
 
-
-
 pub struct AuthRepository {
-    db: Arc<Client>,
+    db: Arc<Client>, // Database client
 }
 
 impl AuthRepository {
+    // Constructor to create a new AuthRepository instance
     pub fn new(db: Arc<Client>) -> Self {
         Self { db }
     }
 
-    // Verifica se o username já existe
+    // Checks if the username already exists
     pub async fn username_exists(&self, username: &str) -> Result<bool, String> {
         let query = "SELECT COUNT(*) FROM users WHERE username = $1";
         let row = self
@@ -26,7 +24,7 @@ impl AuthRepository {
         Ok(count > 0)
     }
 
-    // Insere um novo usuário no banco de dados
+    // Inserts a new user into the database
     pub async fn insert_user(
         &self,
         username: &str,
@@ -41,7 +39,7 @@ impl AuthRepository {
         Ok(())
     }
 
-    // Busca o usuário pelo username
+    // Fetches the user by username
     pub async fn find_user_by_username(
         &self,
         username: &str,
@@ -55,7 +53,7 @@ impl AuthRepository {
         Ok(row.map(|row| (row.get(0), row.get(1))))
     }
 
-    // Insere uma sessão no banco de dados
+    // Inserts a session into the database
     pub async fn insert_session(
         &self,
         user_id: Uuid,
@@ -70,7 +68,7 @@ impl AuthRepository {
         Ok(())
     }
 
-    // Verifica se a sessão é válida
+    // Verifies if the session is valid
     pub async fn verify_session(&self, token: &str) -> Result<Option<Uuid>, String> {
         let query = "SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW()";
         let row = self
@@ -81,7 +79,7 @@ impl AuthRepository {
         Ok(row.map(|row| row.get(0)))
     }
 
-    // Busca o username pelo user_id
+    // Fetches the username by user_id
     pub async fn get_username(&self, user_id: Uuid) -> Result<String, String> {
         let query = "SELECT username FROM users WHERE id = $1";
         let row = self

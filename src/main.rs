@@ -15,6 +15,7 @@ use tokio::signal;
 // The main entry point for the application using the tokio runtime.
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     // Initialize the database connection and handle errors
     let db = match init_db().await {
         Ok(db) => {
@@ -26,13 +27,6 @@ async fn main() {
             return;
         }
     };
-
-    /* Rate limiting can be added here if needed, for example:
-       let rate_limit = RateLimitLayer::new(
-           NonZeroU64::new(5).unwrap().into(),  // Limit to 5 requests
-           Duration::from_secs(60),            // Per 60 seconds
-       );
-    */
 
     // Create the router using the function from the router module
     let app = create_router(db);

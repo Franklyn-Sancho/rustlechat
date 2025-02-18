@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::app_state::AppState;
 use crate::database::init::DbClient;
 use crate::handlers::auth_handlers;
-use crate::handlers::chat_handlers::{create_chat, get_chat_messages, send_message};
+use crate::handlers::chat_handlers::{create_chat, get_chat_messages, send_message_handler};
 use crate::handlers::invitation_handlers::respond_to_invitation;
 use crate::middleware::{auth_middleware, ws_auth_middleware};
 use crate::routes::app_routes::auth_middleware::auth_middleware;
@@ -45,7 +45,7 @@ pub fn create_router(db: DbClient) -> Router {
         )
         .route(
             "/send_message",
-            post(send_message).route_layer(from_fn(auth_middleware)),
+            post(send_message_handler).route_layer(from_fn(auth_middleware)),
         )
         .route(
             "/invites/respond",

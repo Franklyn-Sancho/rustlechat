@@ -4,7 +4,7 @@ use tokio_postgres::{Client, Config, NoTls};
 
 use crate::database::migrations::apply_migrations;
 
-pub type DbClient = Arc<Client>; // Define a type alias for a shared database client wrapped in Arc (Atomic Reference Counted).
+pub type DbClient = Arc<Client>; 
 
 // This function initializes the database connection.
 pub async fn init_db() -> Result<DbClient, String> {

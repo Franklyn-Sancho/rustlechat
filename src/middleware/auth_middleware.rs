@@ -6,10 +6,7 @@ use axum::{
     response::Response,
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
-use std::{
-    env,
-    sync::{Arc, Mutex},
-};
+use std::env;
 
 use tracing::debug;
 

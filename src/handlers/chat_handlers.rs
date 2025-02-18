@@ -1,17 +1,14 @@
 use crate::{
-    app_state::AppState, handlers::invitation_handlers::send_invitation_helper, models::{
-        chat::{Chat, CreateChatData, CreateChatRequest}, invitation::SendInvitationRequest, message::SendMessageRequest
-    }, services::chat_service
+    app_state::AppState,
+    handlers::invitation_handlers::send_invitation_helper,
+    models::{
+        chat::{Chat, CreateChatRequest},
+        message::SendMessageRequest,
+    },
+    services::chat_service,
 };
-use axum::{
-    debug_handler,
-    extract::{Path, Query},
-    response::IntoResponse,
-    Extension, Json,
-};
+use axum::{debug_handler, extract::Path, response::IntoResponse, Extension, Json};
 use hyper::StatusCode;
-use serde::Deserialize;
-use tracing::debug;
 use uuid::Uuid;
 
 pub async fn create_chat(
@@ -21,16 +18,11 @@ pub async fn create_chat(
 ) -> Result<Json<Chat>, (StatusCode, String)> {
     let user_id = Uuid::parse_str(&user_id).expect("User should be authenticated");
 
-    let chat = match chat_service::create_chat(
-        state.db.clone(),
-        user_id,
-        payload.name.clone(),
-    )
-    .await
-    {
-        Ok(chat) => chat,
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
-    };
+    let chat =
+        match chat_service::create_chat(state.db.clone(), user_id, payload.name.clone()).await {
+            Ok(chat) => chat,
+            Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        };
 
     if let Some(invitees) = payload.invitees {
         for invitee_username in invitees {
@@ -42,14 +34,12 @@ pub async fn create_chat(
                 invitee_username.clone(),
             )
             .await
-            {
-            }
+            {}
         }
     }
 
     Ok(Json(chat))
 }
-
 
 #[debug_handler]
 pub async fn get_chat_messages(
@@ -65,17 +55,16 @@ pub async fn get_chat_messages(
 }
 
 #[debug_handler]
-pub async fn send_message(
+pub async fn send_message_handler(
     Extension(state): Extension<AppState>,
     Json(payload): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
     let user_id = state.current_user_id.expect("User should be authenticated");
-    let message =
-        chat_service::send_message(state.db.clone(), payload.chat_id, user_id, payload.message)
-            .await;
 
-    match message {
+    match chat_service::send_message(state.db.clone(), payload.chat_id, user_id, payload.message)
+        .await
+    {
         Ok(message) => Ok(Json(message)),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        Err(e) => Err((StatusCode::FORBIDDEN, e)), // Alterado para FORBIDDEN se o usuário não for membro
     }
 }
