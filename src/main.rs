@@ -1,3 +1,4 @@
+// Import necessary modules
 mod handlers;
 mod middleware;
 mod models;
@@ -6,16 +7,22 @@ mod database;
 mod routes;
 mod websocket;
 mod app_state;
+mod repositories;
+mod utils;
 
+// Import required functions and types
 use database::init::init_db;
 use routes::app_routes::create_router;
 use std::net::SocketAddr;
 use tokio::signal;
+use std::sync::Arc; // Import Arc
 
 // The main entry point for the application using the tokio runtime.
 #[tokio::main]
 async fn main() {
+    // Initialize the logger for logging messages
     env_logger::init();
+
     // Initialize the database connection and handle errors
     let db = match init_db().await {
         Ok(db) => {
@@ -27,6 +34,9 @@ async fn main() {
             return;
         }
     };
+
+    // Wrap the Pool in an Arc
+    let db = Arc::new(db);
 
     // Create the router using the function from the router module
     let app = create_router(db);
@@ -61,10 +71,6 @@ async fn shutdown_signal() {
             .await;
     };
 
-    // If not on a Unix system, the shutdown will be triggered by other means (e.g., Ctrl+C)
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
     // Wait for either Ctrl+C or the termination signal
     tokio::select! {
         _ = ctrl_c => {},
@@ -74,4 +80,3 @@ async fn shutdown_signal() {
     // Log when shutdown signal is received and starting graceful shutdown
     println!("Signal received, starting graceful shutdown");
 }
-

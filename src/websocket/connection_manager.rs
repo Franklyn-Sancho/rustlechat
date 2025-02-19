@@ -6,8 +6,9 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
+use deadpool_postgres::{Manager, Pool, RecyclingMethod};
+use tokio_postgres::NoTls;
 
-use crate::database::init::DbClient;
 
 use super::types::{UserStatus, WebSocketMessage};
 
@@ -25,6 +26,7 @@ pub struct ConnectionManager {
     pub chats: Arc<Mutex<HashMap<Uuid, ChatRoom>>>, // Maps chat IDs to chat rooms
     pub connections: Arc<RwLock<HashMap<Uuid, OnlineUser>>>, // Maps user IDs to online users
     pub usernames: Arc<RwLock<HashMap<String, Uuid>>>, // Maps usernames to user IDs
+    pub db_pool: Arc<Pool>, // Database connection pool (agora é um Arc<Pool>)
 }
 
 // Represents a chat room
@@ -42,11 +44,12 @@ pub struct UserConnection {
 
 impl ConnectionManager {
     // Creates a new ConnectionManager instance
-    pub fn new() -> Self {
+    pub fn new(db_pool: Arc<Pool>) -> Self {
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())), // Initialize empty chats
             connections: Arc::new(RwLock::new(HashMap::new())), // Initialize empty connections
             usernames: Arc::new(RwLock::new(HashMap::new())), // Initialize empty usernames
+            db_pool, // Initialize the database pool (agora é um Arc<Pool>)
         }
     }
 
@@ -60,7 +63,7 @@ impl ConnectionManager {
         
         let mut chats = self.chats.lock().map_err(|e| {
             log::error!("Error locking chats: {}", e);
-            "Lock error"
+            format!("Failed to lock chat rooms: {}", e)
         })?;
     
         let chat_room = chats.entry(chat_id).or_insert_with(|| {
@@ -90,7 +93,7 @@ impl ConnectionManager {
 
     // Removes a user from a chat room
     pub fn remove_user_from_chat(&self, chat_id: Uuid, user_id: Uuid) -> Result<(), String> {
-        let mut chats = self.chats.lock().map_err(|_| "Lock error")?;
+        let mut chats = self.chats.lock().map_err(|_| "Failed to lock chat rooms")?;
 
         if let Some(chat_room) = chats.get_mut(&chat_id) {
             chat_room.users.remove(&user_id); // Remove user from chat
@@ -111,7 +114,7 @@ impl ConnectionManager {
         chat_id: Uuid, // The ID of the chat room
         sender_id: Uuid, // The ID of the user sending the message
     ) -> Result<(), String> {
-        let chats = self.chats.lock().map_err(|_| "Lock error")?;
+        let chats = self.chats.lock().map_err(|_| "Failed to lock chat rooms")?;
 
         if let Some(chat_room) = chats.get(&chat_id) {
             let _ = chat_room.channel.send(message); // Send the message to all users in the chat
@@ -127,7 +130,7 @@ impl ConnectionManager {
         sender_id: Uuid, // The ID of the user sending the message
         message: WebSocketMessage, // The message to broadcast
     ) -> Result<(), String> {
-        let chats = self.chats.lock().map_err(|_| "Lock error")?;
+        let chats = self.chats.lock().map_err(|_| "Failed to lock chat rooms")?;
 
         if let Some(chat_room) = chats.get(&chat_id) {
             let _ = chat_room.channel.send(message); // Send the message to all users in the chat
@@ -143,7 +146,7 @@ impl ConnectionManager {
         user_id: Uuid,
         status: UserStatus, // The new status for the user
     ) -> Result<(), String> {
-        let mut chats = self.chats.lock().map_err(|_| "Lock error")?;
+        let mut chats = self.chats.lock().map_err(|_| "Failed to lock chat rooms")?;
 
         if let Some(chat_room) = chats.get_mut(&chat_id) {
             if let Some(user_conn) = chat_room.users.get_mut(&user_id) {
@@ -161,7 +164,7 @@ impl ConnectionManager {
         user_id: Uuid, // The ID of the user to send the message to
         message: WebSocketMessage, // The message to send
     ) -> Result<(), String> {
-        let connections = self.connections.read().map_err(|_| "Lock error")?;
+        let connections = self.connections.read().map_err(|_| "Failed to lock user connections")?;
 
         if let Some(user) = connections.get(&user_id) {
             user.sender
@@ -181,5 +184,14 @@ impl ConnectionManager {
         let connections = self.connections.read().ok()?; // Get the connections map
         connections.get(user_id).cloned() // Return the user's details
     }
+
+    // Example function to interact with the DB
+    pub async fn get_user_from_db(&self, user_id: Uuid) -> Result<String, String> {
+        let client = self.db_pool.get().await.map_err(|e| format!("Error getting client from pool: {}", e))?;
+        let stmt = client.prepare("SELECT username FROM users WHERE id = $1").await.map_err(|e| e.to_string())?;
+        let row = client.query_one(&stmt, &[&user_id]).await.map_err(|e| e.to_string())?;
+        Ok(row.get(0))
+    }
 }
+
 

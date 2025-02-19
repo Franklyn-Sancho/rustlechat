@@ -3,7 +3,6 @@
 use std::sync::{Arc, Mutex};
 
 use crate::app_state::AppState;
-use crate::database::init::DbClient;
 use crate::handlers::auth_handlers;
 use crate::handlers::chat_handlers::{create_chat, get_chat_messages, send_message_handler};
 use crate::handlers::invitation_handlers::respond_to_invitation;
@@ -17,10 +16,14 @@ use axum::{
     routing::{get, post},
     Extension, Router,
 };
+use deadpool_postgres::Pool;
 use tower_http::trace::TraceLayer;
 
-pub fn create_router(db: DbClient) -> Router {
-    let connections = ConnectionManager::new();
+pub fn create_router(db: Arc<Pool>) -> Router {
+    // Inicializa o ConnectionManager com o pool de banco de dados
+    let connections = ConnectionManager::new(db.clone());
+
+    // Cria o AppState com o ConnectionManager e o pool de banco de dados
     let state = AppState {
         connections,
         db,

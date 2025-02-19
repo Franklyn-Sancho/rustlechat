@@ -1,21 +1,26 @@
-use uuid::Uuid;
+use std::sync::Arc;
 
-use crate::{
-    database::init::DbClient,
+use uuid::Uuid;
+use crate::{ // Alterado para Pool
     models::{
         chat::Chat,
         message::Message,
-    }, 
+    },
 };
+
+use deadpool_postgres::{Pool, Client};
 
 // Creates a new chat
 pub async fn create_chat(
-    db: DbClient, // Database client
-    user_id: Uuid, // The ID of the user creating the chat
+    pool: Arc<Pool>, // Database pool
+    user_id: Uuid,   // The ID of the user creating the chat
     name: Option<String>, // Optional chat name
 ) -> Result<Chat, String> {
     let chat_id = Uuid::new_v4(); // Generate a new chat ID
     let chat_name = name.unwrap_or_else(|| "Default Chat".to_string()); // Default to "Default Chat" if no name is provided
+
+    // Get a client from the pool
+    let client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
 
     // Query to insert a new chat into the database
     let query = "
@@ -24,7 +29,7 @@ pub async fn create_chat(
         RETURNING id, name
     ";
 
-    match db.query_one(query, &[&chat_id, &chat_name]).await {
+    match client.query_one(query, &[&chat_id, &chat_name]).await {
         Ok(row) => {
             // Query to insert the creator into the chat_members table
             let insert_member_query = "
@@ -32,7 +37,7 @@ pub async fn create_chat(
                 VALUES ($1, $2, 'accepted', TRUE)
             ";
 
-            match db.execute(insert_member_query, &[&chat_id, &user_id]).await {
+            match client.execute(insert_member_query, &[&chat_id, &user_id]).await {
                 Ok(_) => Ok(Chat {
                     id: row.get(0),
                     name: row.get(1),
@@ -45,7 +50,10 @@ pub async fn create_chat(
 }
 
 // Fetches all messages in a specific chat
-pub async fn get_chat_messages(db: DbClient, chat_id: Uuid) -> Result<Vec<Message>, String> {
+pub async fn get_chat_messages(pool: Arc<Pool>, chat_id: Uuid) -> Result<Vec<Message>, String> {
+    // Get a client from the pool
+    let client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
+
     // Query to fetch messages for a chat
     let query = "
         SELECT m.id, m.sender_id, m.message_text, m.timestamp 
@@ -54,7 +62,7 @@ pub async fn get_chat_messages(db: DbClient, chat_id: Uuid) -> Result<Vec<Messag
         ORDER BY m.timestamp
     ";
 
-    let rows = db
+    let rows = client
         .query(query, &[&chat_id])
         .await
         .map_err(|e| format!("Error fetching messages: {}", e))?;
@@ -76,13 +84,16 @@ pub async fn get_chat_messages(db: DbClient, chat_id: Uuid) -> Result<Vec<Messag
 
 // Sends a message in a chat
 pub async fn send_message(
-    db: DbClient, // Database client
+    pool: Arc<Pool>, // Database pool
     chat_id: Uuid, // The ID of the chat
     sender_id: Uuid, // The ID of the user sending the message
     message: String, // The message text
 ) -> Result<Message, String> {
+    // Get a client from the pool
+    let client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
+
     // Check if the user is a member of the chat
-    let is_member = db
+    let is_member = client
         .query_opt(
             "SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2",
             &[&chat_id, &sender_id],
@@ -104,7 +115,7 @@ pub async fn send_message(
         RETURNING id, chat_id, sender_id, message_text, timestamp
     ";
 
-    let row = db
+    let row = client
         .query_one(query, &[&message_id, &chat_id, &sender_id, &message])
         .await
         .map_err(|e| format!("Error sending message: {}", e))?;

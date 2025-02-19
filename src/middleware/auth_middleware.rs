@@ -1,4 +1,4 @@
-use crate::{models::user::Claims, services::auth_service::verify_session};
+use crate::{models::user::Claims};
 use axum::{
     body::Body,
     http::{Request, StatusCode},

@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use chrono::{NaiveDateTime, Utc};
-use tokio_postgres::Client;
 use uuid::Uuid;
+use deadpool_postgres::{Pool, Client};
 
 use crate::models::invitation::{ChatInvitation, InvitationStatus};
 
@@ -21,9 +19,8 @@ impl std::fmt::Display for InvitationStatus {
     }
 }
 
-
 pub async fn update_invitation_status(
-    db: &Arc<Client>,
+    pool: &Pool,
     invitation_id: Uuid,
     user_id: Uuid,
     accepted: bool,
@@ -31,9 +28,15 @@ pub async fn update_invitation_status(
     let status = if accepted { "accepted" } else { "rejected" };
     let now = Utc::now().naive_utc();
 
+    // Obtém uma conexão do pool
+    let client: Client = pool
+        .get()
+        .await
+        .map_err(|e| format!("Failed to get client from pool: {}", e))?;
+
     let check_query = "SELECT id FROM invites WHERE id = $1 AND invitee_id = $2";
 
-    let existing_invite = db
+    let existing_invite = client
         .query_opt(check_query, &[&invitation_id, &user_id])
         .await
         .map_err(|e| format!("Failed to fetch invitation: {}", e))?;
@@ -49,7 +52,7 @@ pub async fn update_invitation_status(
         RETURNING id, chat_id, inviter_id, invitee_id, status, created_at, updated_at
     ";
 
-    let row = db
+    let row = client
         .query_opt(update_query, &[&status, &now, &invitation_id, &user_id])
         .await
         .map_err(|e| format!("Failed to update invitation: {}", e))?;
@@ -67,3 +70,4 @@ pub async fn update_invitation_status(
         None => Err("No invitation was updated! It may have already been accepted or rejected.".to_string()),
     }
 }
+
