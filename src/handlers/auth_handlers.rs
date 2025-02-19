@@ -1,5 +1,3 @@
-// handlers/auth_handler.rs
-
 use axum::{
     debug_handler,
     extract::Extension,
@@ -9,7 +7,7 @@ use axum::{
 use crate::{
     app_state::AppState,
     models::user::{LoginData, RegisterData},
-    services::auth_service,
+    services::auth_service::AuthService,
 };
 
 /// Handler for user registration
@@ -18,7 +16,8 @@ pub async fn register(
     Extension(state): Extension<AppState>,
     Json(payload): Json<RegisterData>,
 ) -> impl IntoResponse {
-    auth_service::register_user(state.db.clone(), payload).await
+    let auth_service = AuthService::new(state.db.clone());
+    auth_service.register_user(payload).await
 }
 
 /// Handler for user login
@@ -27,6 +26,8 @@ pub async fn login(
     Extension(state): Extension<AppState>,
     Json(payload): Json<LoginData>,
 ) -> impl IntoResponse {
-    auth_service::login_user(state.db.clone(), payload).await
+    let auth_service = AuthService::new(state.db.clone());
+    auth_service.login_user(payload).await
 }
+
 

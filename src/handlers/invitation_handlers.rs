@@ -1,16 +1,15 @@
+use std::sync::Arc;
+
 use axum::{extract::Path, response::IntoResponse, Extension, Json};
 use chrono::Utc;
+use deadpool_postgres::Pool;
 use hyper::StatusCode;
 use uuid::Uuid;
-use deadpool_postgres::Pool;
 
 use crate::{
     app_state::AppState,
     models::invitation::{InvitationNotification, InvitationResponse},
-    services::{
-        auth_service::get_username,
-        invitation_service::update_invitation_status,
-    },
+    services::{auth_service::AuthService, invitation_service::update_invitation_status},
     websocket::{
         connection_manager::ConnectionManager,
         types::{StatusMessage, UserStatus, WebSocketMessage},
@@ -37,10 +36,12 @@ pub async fn respond_to_invitation(
 
                 let client = match state.db.get().await {
                     Ok(client) => client,
-                    Err(e) => return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Failed to get client from pool: {}", e),
-                    )),
+                    Err(e) => {
+                        return Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to get client from pool: {}", e),
+                        ))
+                    }
                 };
 
                 if let Err(e) = client
@@ -77,7 +78,6 @@ pub async fn respond_to_invitation(
     }
 }
 
-
 pub async fn send_invitation_helper(
     pool: &Pool,
     connections: &ConnectionManager,
@@ -95,13 +95,23 @@ pub async fn send_invitation_helper(
     let existing_member = pool
         .get()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get client from pool: {}", e)))?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get client from pool: {}", e),
+            )
+        })?
         .query_opt(
             "SELECT user_id FROM chat_members WHERE chat_id = $1 AND user_id = $2",
             &[&chat_id, &invitee_id],
         )
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
+            )
+        })?;
 
     if existing_member.is_some() {
         return Err((
@@ -119,7 +129,12 @@ pub async fn send_invitation_helper(
     if let Err(e) = pool
         .get()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get client from pool: {}", e)))?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get client from pool: {}", e),
+            )
+        })?
         .execute(
             query,
             &[
@@ -134,14 +149,22 @@ pub async fn send_invitation_helper(
         )
         .await
     {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create invitation: {}", e)));
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create invitation: {}", e),
+        ));
     }
+
+    // Instanciando o AuthService para usar o método get_username
+    // Criação de instância de AuthService, passando um Arc<Pool> em vez de Pool diretamente
+    let auth_service = AuthService::new(Arc::new(pool.clone()));
 
     if let Some(user) = connections.get_online_user(&invitee_username).await {
         let notification = WebSocketMessage::Invitation(InvitationNotification {
             invitation_id,
             chat_id,
-            inviter_username: get_username(pool, inviter_id)
+            inviter_username: auth_service
+                .get_username(inviter_id)
                 .await
                 .unwrap_or_default(),
             timestamp: Utc::now().naive_utc(),
@@ -170,10 +193,7 @@ pub async fn get_user_id_by_username(pool: &Pool, username: &str) -> Option<Uuid
                 Ok(None) => None,
                 Err(_) => None, // Caso de erro no banco
             }
-        },
+        }
         Err(_) => None, // Caso de erro ao obter o cliente do pool
     }
 }
-
-
-

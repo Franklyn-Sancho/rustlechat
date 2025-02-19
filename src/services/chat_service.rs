@@ -1,132 +1,83 @@
+// services/chat_service.rs
+
 use std::sync::Arc;
-
 use uuid::Uuid;
-use crate::{ // Alterado para Pool
-    models::{
-        chat::Chat,
-        message::Message,
-    },
+use crate::{
+    models::{chat::Chat, message::Message},
+    repositories::chat_repository::ChatRepository,
 };
+use deadpool_postgres::{Pool, Transaction};
 
-use deadpool_postgres::{Pool, Client};
+pub struct ChatService;
 
-// Creates a new chat
-pub async fn create_chat(
-    pool: Arc<Pool>, // Database pool
-    user_id: Uuid,   // The ID of the user creating the chat
-    name: Option<String>, // Optional chat name
-) -> Result<Chat, String> {
-    let chat_id = Uuid::new_v4(); // Generate a new chat ID
-    let chat_name = name.unwrap_or_else(|| "Default Chat".to_string()); // Default to "Default Chat" if no name is provided
-
-    // Get a client from the pool
-    let client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
-
-    // Query to insert a new chat into the database
-    let query = "
-        INSERT INTO chats (id, name) 
-        VALUES ($1, $2)
-        RETURNING id, name
-    ";
-
-    match client.query_one(query, &[&chat_id, &chat_name]).await {
-        Ok(row) => {
-            // Query to insert the creator into the chat_members table
-            let insert_member_query = "
-                INSERT INTO chat_members (chat_id, user_id, status, is_creator) 
-                VALUES ($1, $2, 'accepted', TRUE)
-            ";
-
-            match client.execute(insert_member_query, &[&chat_id, &user_id]).await {
-                Ok(_) => Ok(Chat {
-                    id: row.get(0),
-                    name: row.get(1),
-                }),
-                Err(e) => Err(format!("Failed to add creator to chat_members: {:?}", e)),
-            }
-        }
-        Err(e) => Err(format!("Failed to create chat: {:?}", e)),
-    }
-}
-
-// Fetches all messages in a specific chat
-pub async fn get_chat_messages(pool: Arc<Pool>, chat_id: Uuid) -> Result<Vec<Message>, String> {
-    // Get a client from the pool
-    let client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
-
-    // Query to fetch messages for a chat
-    let query = "
-        SELECT m.id, m.sender_id, m.message_text, m.timestamp 
-        FROM messages m
-        WHERE m.chat_id = $1
-        ORDER BY m.timestamp
-    ";
-
-    let rows = client
-        .query(query, &[&chat_id])
-        .await
-        .map_err(|e| format!("Error fetching messages: {}", e))?;
-
-    // Map the query result into a vector of Message objects
-    let messages = rows
-        .iter()
-        .map(|row| Message {
-            id: row.get(0),
-            chat_id: row.get(1),
-            sender_id: row.get(2),
-            message_text: row.get(3),
-            timestamp: row.get(4),
+impl ChatService {
+    /// Creates a new chat
+    pub async fn create_chat(pool: Arc<Pool>, user_id: Uuid, name: Option<String>) -> Result<Chat, String> {
+        let chat_id = Uuid::new_v4();
+        let chat_name = name.unwrap_or_else(|| "Default Chat".to_string());
+        
+        let mut client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
+        let transaction = client.transaction().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
+        
+        // Create the chat and add the user as a member
+        let (chat_id, chat_name) = ChatRepository::create_chat(&transaction, chat_id, &chat_name)
+            .await.map_err(|e| format!("Failed to create chat: {}", e))?;
+        
+        // Add the user as a member of the chat
+        ChatRepository::add_chat_member(&transaction, chat_id, user_id)
+            .await.map_err(|e| format!("Failed to add creator to chat_members: {}", e))?;
+        
+        // Commit the transaction
+        transaction.commit().await.map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        
+        // Return the created chat
+        Ok(Chat {
+            id: chat_id,
+            name: chat_name,
         })
-        .collect();
-
-    Ok(messages)
-}
-
-// Sends a message in a chat
-pub async fn send_message(
-    pool: Arc<Pool>, // Database pool
-    chat_id: Uuid, // The ID of the chat
-    sender_id: Uuid, // The ID of the user sending the message
-    message: String, // The message text
-) -> Result<Message, String> {
-    // Get a client from the pool
-    let client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
-
-    // Check if the user is a member of the chat
-    let is_member = client
-        .query_opt(
-            "SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2",
-            &[&chat_id, &sender_id],
-        )
-        .await
-        .map_err(|e| format!("Error checking chat membership: {}", e))?
-        .is_some();
-
-    if !is_member {
-        return Err("User is not a member of this chat.".to_string());
     }
 
-    let message_id = Uuid::new_v4(); // Generate a new message ID
+    /// Fetches all messages in a specific chat
+    pub async fn get_chat_messages(pool: Arc<Pool>, chat_id: Uuid) -> Result<Vec<Message>, String> {
+        let mut client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
+        let transaction = client.transaction().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
 
-    // Query to insert the new message into the database
-    let query = "
-        INSERT INTO messages (id, chat_id, sender_id, message_text)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, chat_id, sender_id, message_text, timestamp
-    ";
+        // Fetch messages for the chat
+        ChatRepository::get_chat_messages(&transaction, chat_id)
+            .await.map_err(|e| format!("Error fetching messages: {}", e))
+    }
 
-    let row = client
-        .query_one(query, &[&message_id, &chat_id, &sender_id, &message])
-        .await
-        .map_err(|e| format!("Error sending message: {}", e))?;
+    /// Sends a message in a chat
+    pub async fn send_message(pool: Arc<Pool>, chat_id: Uuid, sender_id: Uuid, message_text: String) -> Result<Message, String> {
+        let message_id = Uuid::new_v4();
+        let mut client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
+        let transaction = client.transaction().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
 
-    // Return the created message
-    Ok(Message {
-        id: row.get(0),
-        chat_id: row.get(1),
-        sender_id: row.get(2),
-        message_text: row.get(3),
-        timestamp: row.get(4),
-    })
+        // Check if the sender is a member of the chat
+        let is_member = ChatRepository::check_user_membership(&transaction, chat_id, sender_id)
+            .await.map_err(|e| format!("Error checking chat membership: {}", e))?;
+        
+        if !is_member {
+            return Err("User is not a member of this chat.".to_string());
+        }
+
+        // Insert the message
+        ChatRepository::insert_message(&transaction, message_id, chat_id, sender_id, &message_text)
+            .await.map_err(|e| format!("Error inserting message: {}", e))?;
+
+        // Fetch the inserted message
+        let message = ChatRepository::get_message_by_id(&transaction, message_id)
+            .await.map_err(|e| format!("Error retrieving message: {}", e))?;
+
+        // Commit the transaction
+        transaction.commit().await.map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        
+        Ok(message)
+    }
 }
+
+
+
+
+
 

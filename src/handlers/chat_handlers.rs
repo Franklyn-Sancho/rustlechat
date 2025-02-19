@@ -5,7 +5,7 @@ use crate::{
         chat::{Chat, CreateChatRequest},
         message::SendMessageRequest,
     },
-    services::chat_service,
+    services::chat_service::{self, ChatService},
 };
 use axum::{debug_handler, extract::Path, response::IntoResponse, Extension, Json};
 use hyper::StatusCode;
@@ -19,7 +19,7 @@ pub async fn create_chat(
     let user_id = Uuid::parse_str(&user_id).expect("User should be authenticated");
 
     // Pass the Arc<Pool> to the service layer
-    let chat = match chat_service::create_chat(state.db.clone(), user_id, payload.name.clone()).await {
+    let chat = match ChatService::create_chat(state.db.clone(), user_id, payload.name.clone()).await {
         Ok(chat) => chat,
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     };
@@ -37,6 +37,7 @@ pub async fn create_chat(
             .await
             {
                 // Optionally log errors or handle them
+                eprintln!("Error sending invitation: {}", e);
             }
         }
     }
@@ -50,7 +51,7 @@ pub async fn get_chat_messages(
     Path(chat_id): axum::extract::Path<Uuid>, // Extracts `chat_id` from the URL
 ) -> impl IntoResponse {
     // Pass the Arc<Pool> to the service layer
-    let messages = chat_service::get_chat_messages(state.db.clone(), chat_id).await;
+    let messages = ChatService::get_chat_messages(state.db.clone(), chat_id).await;
 
     match messages {
         Ok(messages) => Ok(Json(messages)),
@@ -66,7 +67,7 @@ pub async fn send_message_handler(
     let user_id = state.current_user_id.expect("User should be authenticated");
 
     // Pass the Arc<Pool> to the service layer
-    match chat_service::send_message(state.db.clone(), payload.chat_id, user_id, payload.message)
+    match ChatService::send_message(state.db.clone(), payload.chat_id, user_id, payload.message)
         .await
     {
         Ok(message) => Ok(Json(message)),
