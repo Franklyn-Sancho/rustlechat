@@ -1,73 +1,55 @@
-use chrono::{NaiveDateTime, Utc};
+// services/invitation_service.rs
+
+use crate::repositories::invitation_repository::InvitationRepository;
+use crate::models::invitation::{ChatInvitation};
 use uuid::Uuid;
-use deadpool_postgres::{Pool, Client};
 
-use crate::models::invitation::{ChatInvitation, InvitationStatus};
+pub struct InvitationService {
+    repository: InvitationRepository,
+}
 
-impl std::fmt::Display for InvitationStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                InvitationStatus::Pending => "pending",
-                InvitationStatus::Accepted => "accepted",
-                InvitationStatus::Rejected => "rejected",
-                InvitationStatus::Expired => "expired",
-            }
-        )
+impl InvitationService {
+    pub fn new(repository: InvitationRepository) -> Self {
+        InvitationService { repository }
+    }
+
+    pub async fn update_invitation_status(
+        &self,
+        invitation_id: Uuid,
+        user_id: Uuid,
+        accepted: bool,
+    ) -> Result<ChatInvitation, String> {
+        let status = if accepted { "accepted" } else { "rejected" };
+        
+        // Lógica de atualização de convite no repositório
+        self.repository.update_invitation_status(invitation_id, user_id, accepted).await
+    }
+
+    pub async fn send_invitation(
+        &self,
+        chat_id: Uuid,
+        inviter_id: Uuid,
+        invitee_username: &str,
+    ) -> Result<Uuid, String> {
+        // Busca o ID do usuário baseado no nome
+        let invitee_id = match self.repository.get_user_id_by_username(&invitee_username).await {
+            Ok(Some(id)) => id,
+            Ok(None) => return Err("User not found".to_string()),
+            Err(e) => return Err(e),
+        };
+
+        // Envia o convite
+        self.repository.send_invitation(chat_id, inviter_id, invitee_id).await
+    }
+
+    pub async fn add_user_to_chat(
+        &self,
+        chat_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), String> {
+        self.repository.insert_user_to_chat(chat_id, user_id).await
     }
 }
 
-pub async fn update_invitation_status(
-    pool: &Pool,
-    invitation_id: Uuid,
-    user_id: Uuid,
-    accepted: bool,
-) -> Result<ChatInvitation, String> {
-    let status = if accepted { "accepted" } else { "rejected" };
-    let now = Utc::now().naive_utc();
 
-    // Obtém uma conexão do pool
-    let client: Client = pool
-        .get()
-        .await
-        .map_err(|e| format!("Failed to get client from pool: {}", e))?;
-
-    let check_query = "SELECT id FROM invites WHERE id = $1 AND invitee_id = $2";
-
-    let existing_invite = client
-        .query_opt(check_query, &[&invitation_id, &user_id])
-        .await
-        .map_err(|e| format!("Failed to fetch invitation: {}", e))?;
-
-    if existing_invite.is_none() {
-        return Err(format!("No invitation found for id: {} and user: {}", invitation_id, user_id));
-    }
-
-    let update_query = "
-        UPDATE invites 
-        SET status = $1, updated_at = $2
-        WHERE id = $3 AND invitee_id = $4
-        RETURNING id, chat_id, inviter_id, invitee_id, status, created_at, updated_at
-    ";
-
-    let row = client
-        .query_opt(update_query, &[&status, &now, &invitation_id, &user_id])
-        .await
-        .map_err(|e| format!("Failed to update invitation: {}", e))?;
-
-    match row {
-        Some(row) => Ok(ChatInvitation {
-            id: row.get(0),
-            chat_id: row.get(1),
-            inviter_id: row.get(2),
-            invitee_id: row.get(3),
-            status: row.get(4),
-            created_at: row.get::<_, NaiveDateTime>(5),
-            updated_at: row.get::<_, NaiveDateTime>(6),
-        }),
-        None => Err("No invitation was updated! It may have already been accepted or rejected.".to_string()),
-    }
-}
 

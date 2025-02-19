@@ -1,14 +1,9 @@
 use chrono::Utc;
 use std::collections::HashMap;
-use std::{
-    hash::Hash,
-    sync::{Arc, Mutex, RwLock},
-};
-use tokio::sync::{broadcast, mpsc};
+use std::sync::{Arc, Mutex, RwLock};
+use tokio::sync::broadcast;
 use uuid::Uuid;
-use deadpool_postgres::{Manager, Pool, RecyclingMethod};
-use tokio_postgres::NoTls;
-
+use deadpool_postgres::Pool;
 
 use super::types::{UserStatus, WebSocketMessage};
 
@@ -26,7 +21,7 @@ pub struct ConnectionManager {
     pub chats: Arc<Mutex<HashMap<Uuid, ChatRoom>>>, // Maps chat IDs to chat rooms
     pub connections: Arc<RwLock<HashMap<Uuid, OnlineUser>>>, // Maps user IDs to online users
     pub usernames: Arc<RwLock<HashMap<String, Uuid>>>, // Maps usernames to user IDs
-    pub db_pool: Arc<Pool>, // Database connection pool (agora é um Arc<Pool>)
+    pub db_pool: Pool, // Database connection pool (agora é Pool diretamente)
 }
 
 // Represents a chat room
@@ -44,12 +39,12 @@ pub struct UserConnection {
 
 impl ConnectionManager {
     // Creates a new ConnectionManager instance
-    pub fn new(db_pool: Arc<Pool>) -> Self {
+    pub fn new(db_pool: Pool) -> Self {
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())), // Initialize empty chats
             connections: Arc::new(RwLock::new(HashMap::new())), // Initialize empty connections
             usernames: Arc::new(RwLock::new(HashMap::new())), // Initialize empty usernames
-            db_pool, // Initialize the database pool (agora é um Arc<Pool>)
+            db_pool, // Initialize the database pool (agora é Pool diretamente)
         }
     }
 

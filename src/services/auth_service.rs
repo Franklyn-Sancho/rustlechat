@@ -14,11 +14,11 @@ use crate::{
 };
 
 pub struct AuthService {
-    pool: Arc<Pool>,
+    pool: Pool,
 }
 
 impl AuthService {
-    pub fn new(pool: Arc<Pool>) -> Self {
+    pub fn new(pool: Pool) -> Self {
         AuthService { pool }
     }
 

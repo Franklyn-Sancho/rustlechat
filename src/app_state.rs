@@ -11,7 +11,7 @@ pub struct AppState {
     /// WebSocket connection manager
     pub connections: ConnectionManager,
     /// Database connection pool wrapped in Arc for thread-safe sharing
-    pub db: Arc<Pool>,
+    pub db: Pool,
     /// Optional ID of the currently authenticated user
     pub current_user_id: Option<Uuid>,
 }
@@ -25,7 +25,7 @@ impl AppState {
     /// 
     /// # Returns
     /// * `Self` - New AppState instance
-    pub fn new(db: Arc<Pool>, connections: ConnectionManager) -> Self {
+    pub fn new(db: Pool, connections: ConnectionManager) -> Self {
         Self {
             connections,
             db,

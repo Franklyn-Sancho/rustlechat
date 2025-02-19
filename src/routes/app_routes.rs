@@ -19,7 +19,7 @@ use axum::{
 use deadpool_postgres::Pool;
 use tower_http::trace::TraceLayer;
 
-pub fn create_router(db: Arc<Pool>) -> Router {
+pub fn create_router(db: Pool) -> Router {
     // Inicializa o ConnectionManager com o pool de banco de dados
     let connections = ConnectionManager::new(db.clone());
 

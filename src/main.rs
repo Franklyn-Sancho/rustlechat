@@ -15,7 +15,6 @@ use database::init::init_db;
 use routes::app_routes::create_router;
 use std::net::SocketAddr;
 use tokio::signal;
-use std::sync::Arc; // Import Arc
 
 // The main entry point for the application using the tokio runtime.
 #[tokio::main]
@@ -34,9 +33,6 @@ async fn main() {
             return;
         }
     };
-
-    // Wrap the Pool in an Arc
-    let db = Arc::new(db);
 
     // Create the router using the function from the router module
     let app = create_router(db);

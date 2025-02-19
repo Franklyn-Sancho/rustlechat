@@ -12,7 +12,7 @@ pub struct ChatService;
 
 impl ChatService {
     /// Creates a new chat
-    pub async fn create_chat(pool: Arc<Pool>, user_id: Uuid, name: Option<String>) -> Result<Chat, String> {
+    pub async fn create_chat(pool: Pool, user_id: Uuid, name: Option<String>) -> Result<Chat, String> {
         let chat_id = Uuid::new_v4();
         let chat_name = name.unwrap_or_else(|| "Default Chat".to_string());
         
@@ -38,7 +38,7 @@ impl ChatService {
     }
 
     /// Fetches all messages in a specific chat
-    pub async fn get_chat_messages(pool: Arc<Pool>, chat_id: Uuid) -> Result<Vec<Message>, String> {
+    pub async fn get_chat_messages(pool: Pool, chat_id: Uuid) -> Result<Vec<Message>, String> {
         let mut client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
         let transaction = client.transaction().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
 
@@ -48,7 +48,7 @@ impl ChatService {
     }
 
     /// Sends a message in a chat
-    pub async fn send_message(pool: Arc<Pool>, chat_id: Uuid, sender_id: Uuid, message_text: String) -> Result<Message, String> {
+    pub async fn send_message(pool: Pool, chat_id: Uuid, sender_id: Uuid, message_text: String) -> Result<Message, String> {
         let message_id = Uuid::new_v4();
         let mut client = pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
         let transaction = client.transaction().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
