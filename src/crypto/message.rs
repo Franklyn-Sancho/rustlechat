@@ -7,8 +7,8 @@ use crate::crypto::{CryptoError, EncryptedMessage, ChatKey};
 
 #[derive(Clone)]
 pub struct MessageCrypto {
-    cipher: Aes256Gcm,
-    key_fingerprint: String,
+    pub cipher: Aes256Gcm,
+    pub key_fingerprint: String,
 }
 
 impl MessageCrypto {

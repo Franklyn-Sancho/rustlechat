@@ -96,6 +96,7 @@ async fn create_tables(client: &Client) -> Result<(), String> {
             sender_id UUID REFERENCES users(id),
             encrypted_content BYTEA NOT NULL,
             nonce BYTEA NOT NULL,
+            key_fingerprint VARCHAR(255),
             timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (chat_id, sender_id) REFERENCES chat_members(chat_id, user_id)
         )

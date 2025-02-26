@@ -1,17 +1,17 @@
 use chrono::Utc;
+use deadpool_postgres::Pool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use deadpool_postgres::Pool;
 
 use super::types::{UserStatus, WebSocketMessage};
 
 // Represents an online user
 #[derive(Debug, Clone)]
 pub struct OnlineUser {
-    pub id: Uuid, // User ID
-    pub username: String, // Username
+    pub id: Uuid,                                    // User ID
+    pub username: String,                            // Username
     pub sender: broadcast::Sender<WebSocketMessage>, // Sender for WebSocket messages
 }
 
@@ -33,7 +33,7 @@ pub struct ChatRoom {
 // Represents a user's connection within a chat
 pub struct UserConnection {
     pub sender: broadcast::Sender<WebSocketMessage>, // Sender for WebSocket messages
-    pub status: UserStatus, // User's status (online/offline)
+    pub status: UserStatus,                          // User's status (online/offline)
     pub last_activity: chrono::DateTime<chrono::Utc>, // Timestamp of the last activity
 }
 
@@ -55,12 +55,12 @@ impl ConnectionManager {
         user_id: Uuid, // The ID of the user
     ) -> Result<broadcast::Receiver<WebSocketMessage>, String> {
         log::info!("Adding user {} to chat {}", user_id, chat_id);
-        
+
         let mut chats = self.chats.lock().map_err(|e| {
             log::error!("Error locking chats: {}", e);
             format!("Failed to lock chat rooms: {}", e)
         })?;
-    
+
         let chat_room = chats.entry(chat_id).or_insert_with(|| {
             log::info!("Creating new chat room {}", chat_id);
             let (tx, _) = broadcast::channel(100); // Create a new broadcast channel for the chat
@@ -69,7 +69,7 @@ impl ConnectionManager {
                 channel: tx,
             }
         });
-    
+
         // If the user is not already in the chat, add them
         if !chat_room.users.contains_key(&user_id) {
             log::info!("Adding new user {} to chat {}", user_id, chat_id);
@@ -81,7 +81,7 @@ impl ConnectionManager {
             };
             chat_room.users.insert(user_id, user_conn); // Insert user into the chat
         }
-    
+
         log::info!("User {} successfully added to chat {}", user_id, chat_id);
         Ok(chat_room.channel.subscribe()) // Return the receiver to listen for messages
     }
@@ -103,26 +103,47 @@ impl ConnectionManager {
     }
 
     // Broadcasts a message to all users in a specific chat room
+    // Update your broadcast_message function
     pub fn broadcast_message(
         &self,
-        message: WebSocketMessage, // The message to broadcast
-        chat_id: Uuid, // The ID of the chat room
-        sender_id: Uuid, // The ID of the user sending the message
+        message: WebSocketMessage,
+        chat_id: Uuid,
+        sender_id: Uuid,
     ) -> Result<(), String> {
-        let chats = self.chats.lock().map_err(|_| "Failed to lock chat rooms")?;
+        let chats = self
+            .chats
+            .lock()
+            .map_err(|e| format!("Failed to lock chat rooms: {}", e))?;
 
         if let Some(chat_room) = chats.get(&chat_id) {
-            let _ = chat_room.channel.send(message); // Send the message to all users in the chat
+            match chat_room.channel.send(message) {
+                Ok(receiver_count) => {
+                    log::info!(
+                        "Message broadcasted to {} receivers in chat {}",
+                        receiver_count,
+                        chat_id
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!("Failed to broadcast message to chat {}: {}", chat_id, e);
+                    Err(format!("Failed to broadcast message: {}", e))
+                }
+            }
+        } else {
+            log::warn!(
+                "Attempted to broadcast to nonexistent chat room: {}",
+                chat_id
+            );
+            Err(format!("Chat room {} not found", chat_id))
         }
-
-        Ok(())
     }
 
     // Broadcasts a message to a chat room asynchronously
     pub async fn broadcast_to_chat(
         &self,
-        chat_id: Uuid, // The ID of the chat room
-        sender_id: Uuid, // The ID of the user sending the message
+        chat_id: Uuid,             // The ID of the chat room
+        sender_id: Uuid,           // The ID of the user sending the message
         message: WebSocketMessage, // The message to broadcast
     ) -> Result<(), String> {
         let chats = self.chats.lock().map_err(|_| "Failed to lock chat rooms")?;
@@ -156,10 +177,13 @@ impl ConnectionManager {
     // Sends a direct message to a specific user
     pub async fn send_direct_message(
         &self,
-        user_id: Uuid, // The ID of the user to send the message to
+        user_id: Uuid,             // The ID of the user to send the message to
         message: WebSocketMessage, // The message to send
     ) -> Result<(), String> {
-        let connections = self.connections.read().map_err(|_| "Failed to lock user connections")?;
+        let connections = self
+            .connections
+            .read()
+            .map_err(|_| "Failed to lock user connections")?;
 
         if let Some(user) = connections.get(&user_id) {
             user.sender
@@ -182,11 +206,19 @@ impl ConnectionManager {
 
     // Example function to interact with the DB
     pub async fn get_user_from_db(&self, user_id: Uuid) -> Result<String, String> {
-        let client = self.db_pool.get().await.map_err(|e| format!("Error getting client from pool: {}", e))?;
-        let stmt = client.prepare("SELECT username FROM users WHERE id = $1").await.map_err(|e| e.to_string())?;
-        let row = client.query_one(&stmt, &[&user_id]).await.map_err(|e| e.to_string())?;
+        let client = self
+            .db_pool
+            .get()
+            .await
+            .map_err(|e| format!("Error getting client from pool: {}", e))?;
+        let stmt = client
+            .prepare("SELECT username FROM users WHERE id = $1")
+            .await
+            .map_err(|e| e.to_string())?;
+        let row = client
+            .query_one(&stmt, &[&user_id])
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(row.get(0))
     }
 }
-
-

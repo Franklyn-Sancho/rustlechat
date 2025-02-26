@@ -2,7 +2,7 @@ use std::sync::Arc;
 use crate::app_state::AppState;
 use crate::crypto::{MessageCrypto, ChatKey};
 use crate::handlers::auth_handlers;
-use crate::handlers::chat_handlers::{create_chat, get_chat_messages, send_message_handler};
+use crate::handlers::chat_handlers::{create_chat, get_chat_messages, /* send_message_handler */};
 use crate::handlers::invitation_handlers::respond_to_invitation;
 use crate::middleware::auth_middleware::auth_middleware;
 use crate::middleware::ws_auth_middleware::ws_auth_middleware;
@@ -56,10 +56,10 @@ pub fn create_router(db: Pool) -> Router {
             "/get_messages/:chat_id",
             get(get_chat_messages).route_layer(from_fn(auth_middleware)),
         )
-        .route(
+        /* .route(
             "/send_message",
             post(send_message_handler).route_layer(from_fn(auth_middleware)),
-        )
+        ) */
         .route(
             "/invites/respond",
             post(respond_to_invitation).route_layer(from_fn(auth_middleware)),

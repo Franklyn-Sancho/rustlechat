@@ -40,73 +40,22 @@ pub async fn websocket_handler(
     StatusCode::UNAUTHORIZED.into_response()
 }
 
-// Checks if the user is allowed to send messages in the specified chat
-async fn can_user_send_message(
-    connection_manager: &ConnectionManager,
-    db_pool: &Pool,
-    chat_id: Uuid,
-    user_id: Uuid,
-) -> Result<bool, String> {
-    log::info!(
-        "Checking if user with ID {} can send messages in chat with ID {}",
-        user_id,
-        chat_id
-    );
-
-    // Get a database connection from the pool
-    let client = db_pool.get().await.map_err(|e| format!("Error getting DB client: {}", e))?;
-
-    // SQL query to check if the user is an accepted member or the creator of the chat
-    let query = "
-        SELECT 1 FROM chat_members 
-        WHERE chat_id = $1 AND user_id = $2 
-        AND (status = 'accepted' OR is_creator = true)
-    ";
-
-    match client.query_opt(query, &[&chat_id, &user_id]).await {
-        Ok(Some(_)) => {
-            log::info!("User with ID {} is authorized in chat ID {}", user_id, chat_id);
-
-            // If authorized in the DB, check if the user is already added in memory
-            if !is_user_in_chat(connection_manager, chat_id, user_id).await? {
-                // If not, add the user to the chat in the ConnectionManager
-                let _ = connection_manager.add_user_to_chat(chat_id, user_id).await?;
-            }
-            Ok(true)
-        }
-        Ok(None) => {
-            log::warn!("User with ID {} is not authorized in chat ID {}", user_id, chat_id);
-            Err("User is not authorized in this chat".to_string())
-        }
-        Err(e) => {
-            log::error!("Error checking authorization: {}", e);
-            Err(format!("Error checking authorization: {}", e))
-        }
-    }
-}
-
 async fn get_or_create_chat_key(db_pool: &Pool, chat_id: Uuid, user_id: Uuid) -> Result<ChatKey, String> {
     let mut client = db_pool.get().await.map_err(|e| format!("DB error: {}", e))?;
     let transaction = client.transaction().await.map_err(|e| e.to_string())?;
 
-    // Try to get existing key
-    if let Some(key) = ChatRepository::get_chat_key(&transaction, chat_id, user_id).await
-        .map_err(|e| e.to_string())? {
-        return Ok(ChatKey(key));
+    if let Some(key) = ChatRepository::get_chat_key(&transaction, chat_id, user_id).await? {
+        Ok(ChatKey(key))
+    } else {
+        let chat_key = MessageCrypto::generate_chat_key();
+        ChatRepository::store_chat_key(&transaction, chat_id, user_id, chat_key.0.clone()).await?;
+        transaction.commit().await.map_err(|e| e.to_string())?;
+        Ok(chat_key)
     }
-
-    // Generate new key if none exists
-    let chat_key = MessageCrypto::generate_chat_key();
-    ChatRepository::store_chat_key(&transaction, chat_id, user_id, chat_key.0.clone())
-        .await
-        .map_err(|e| e.to_string())?;
-
-    transaction.commit().await.map_err(|e| e.to_string())?;
-    Ok(chat_key)
 }
 
-// Handles the WebSocket connection once it has been upgraded
-async fn handle_websocket_connection(
+/// Handles a WebSocket connection
+pub async fn handle_websocket_connection(
     mut socket: WebSocket,
     state: AppState,
     chat_id: Uuid,
@@ -119,7 +68,7 @@ async fn handle_websocket_connection(
     let mut rx = match conn_manager.add_user_to_chat(chat_id, user_id).await {
         Ok(rx) => rx,
         Err(e) => {
-            eprintln!("Failed to add user to chat: {}", e);
+            log::error!("Failed to add user to chat: {}", e);
             return;
         }
     };
@@ -128,7 +77,7 @@ async fn handle_websocket_connection(
     let chat_key = match get_or_create_chat_key(&db_pool, chat_id, user_id).await {
         Ok(key) => key,
         Err(e) => {
-            eprintln!("Failed to get chat key: {}", e);
+            log::error!("Failed to get chat key: {}", e);
             return;
         }
     };
@@ -137,7 +86,7 @@ async fn handle_websocket_connection(
     let message_crypto = match MessageCrypto::new(&chat_key) {
         Ok(mc) => mc,
         Err(e) => {
-            eprintln!("Failed to initialize crypto: {}", e);
+            log::error!("Failed to initialize crypto: {}", e);
             return;
         }
     };
@@ -147,26 +96,15 @@ async fn handle_websocket_connection(
             Some(msg) = socket.recv() => {
                 match msg {
                     Ok(Message::Text(text)) => {
-                        // Encrypt message
-                        let encrypted = match message_crypto.encrypt(&text) {
-                            Ok(enc) => enc,
-                            Err(e) => {
-                                eprintln!("Encryption error: {}", e);
-                                continue;
-                            }
-                        };
-
-                        let chat_msg = WebSocketMessage::Chat(ChatMessage {
-                            message_id: Uuid::new_v4(),
+                        if let Err(e) = handle_incoming_message(
+                            &conn_manager,
+                            &db_pool,
+                            &message_crypto,
                             chat_id,
-                            sender_id: user_id,
-                            content: encrypted,
-                            timestamp: Utc::now().naive_utc(),
-                        });
-
-                        if let Err(e) = conn_manager.broadcast_message(chat_msg, chat_id, user_id) {
-                            eprintln!("Failed to broadcast: {}", e);
-                            break;
+                            user_id,
+                            text,
+                        ).await {
+                            log::error!("Error handling incoming message: {}", e);
                         }
                     }
                     _ => continue,
@@ -178,11 +116,11 @@ async fn handle_websocket_connection(
                     match message_crypto.decrypt(&chat_msg.content) {
                         Ok(decrypted) => {
                             if let Err(e) = socket.send(Message::Text(decrypted)).await {
-                                eprintln!("Send error: {}", e);
+                                log::error!("Send error: {}", e);
                                 break;
                             }
                         }
-                        Err(e) => eprintln!("Decryption error: {}", e)
+                        Err(e) => log::error!("Decryption error: {}", e),
                     }
                 }
             }
@@ -190,36 +128,49 @@ async fn handle_websocket_connection(
     }
 }
 
-/// RAII guard to ensure proper cleanup of user connection
-struct CleanupGuard {
-    conn_manager: ConnectionManager,
+/// Handles an incoming WebSocket message
+async fn handle_incoming_message(
+    conn_manager: &ConnectionManager,
+    db_pool: &Pool,
+    message_crypto: &MessageCrypto,
     chat_id: Uuid,
     user_id: Uuid,
+    text: String,
+) -> Result<(), String> {
+    // Encrypt message
+    let encrypted = message_crypto.encrypt(&text).map_err(|e| e.to_string())?;
+
+    // Generate a new UUID for the message
+    let message_id = Uuid::new_v4();
+
+    // Insert the encrypted message into the database
+    let mut client = db_pool.get().await.map_err(|e| format!("Failed to get DB client: {}", e))?;
+    let transaction = client.transaction().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
+
+    ChatRepository::insert_encrypted_message(
+        &transaction,
+        message_id,
+        chat_id,
+        user_id,
+        &encrypted,
+    ).await?;
+
+    transaction.commit().await.map_err(|e| format!("Failed to commit transaction: {}", e))?;
+
+    // Broadcast the message to other users in the chat
+    let chat_msg = WebSocketMessage::Chat(ChatMessage {
+        message_id,
+        chat_id,
+        sender_id: user_id,
+        content: encrypted,
+        timestamp: Utc::now().naive_utc(),
+    });
+
+    conn_manager.broadcast_message(chat_msg, chat_id, user_id)?;
+
+    Ok(())
 }
 
-impl Drop for CleanupGuard {
-    fn drop(&mut self) {
-        let _ = self.conn_manager.update_user_status(
-            self.chat_id,
-            self.user_id,
-            UserStatus::Offline
-        );
-        let _ = self.conn_manager.remove_user_from_chat(
-            self.chat_id,
-            self.user_id
-        );
-    }
-}
 
-// Helper function to check if a user is already present in the in-memory representation of a chat
-pub async fn is_user_in_chat(
-    connection_manager: &ConnectionManager,
-    chat_id: Uuid,
-    user_id: Uuid,
-) -> Result<bool, String> {
-    let chats = connection_manager.chats.lock().map_err(|_| "Lock error")?;
-    Ok(chats
-        .get(&chat_id)
-        .map(|chat| chat.users.contains_key(&user_id))
-        .unwrap_or(false))
-}
+
+

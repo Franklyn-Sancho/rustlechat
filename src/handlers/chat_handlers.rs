@@ -66,34 +66,40 @@ pub async fn get_chat_messages(
     }
 }
 
-/// HTTP handler for sending messages
-pub async fn send_message_handler(
+
+/* pub async fn send_message_handler(
     Extension(state): Extension<AppState>,
     Json(payload): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
-    // Get authenticated user ID
+    // Verifica se o usuário está autenticado
     let user_id = match state.current_user_id {
         Some(id) => id,
         None => return Err((StatusCode::UNAUTHORIZED, "User not authenticated".to_string())),
     };
     
-    // Get the chat key
+    // Verifica se o chat_id e a mensagem são válidos
+    if payload.chat_id.is_nil() || payload.message.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Invalid chat_id or message".to_string()));
+    }
+
+    // Busca a chave do chat
     let chat_key = match ChatService::get_chat_key(&state.db, payload.chat_id, user_id).await {
         Ok(key) => key,
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get chat key: {}", e))),
     };
-    
-    // Send encrypted message
-    let message = ChatService::send_encrypted_message(
+
+    // Tenta enviar a mensagem criptografada
+    let message = match ChatService::send_encrypted_message(
         state.db.clone(),
         payload.chat_id,
         user_id,
         payload.message,
         &chat_key,
-    ).await;
-    
-    match message {
-        Ok(msg) => Ok(Json(msg)),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
-    }
-}
+    ).await {
+        Ok(msg) => msg,
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to send encrypted message: {}", e))),
+    };
+
+    // Retorna a resposta com a mensagem
+    Ok(Json(message))
+} */

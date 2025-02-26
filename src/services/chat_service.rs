@@ -105,69 +105,111 @@ impl ChatService {
     /// 
     /// # Returns
     /// * Message object or error
-    pub async fn send_encrypted_message(
+   /*  pub async fn send_encrypted_message(
         pool: Pool,
         chat_id: Uuid,
         sender_id: Uuid,
         message: String,
         chat_key: &ChatKey,
     ) -> Result<Message, String> {
-        let mut client = pool
-            .get()
-            .await
-            .map_err(|e| format!("Database connection error: {}", e))?;
+        println!("INICIANDO ENVIO DE MENSAGEM");
+        log::info!("Starting encrypted message transaction for chat {} from user {}", chat_id, sender_id);
         
-        let transaction = client
-            .transaction()
-            .await
-            .map_err(|e| format!("Transaction error: {}", e))?;
+        let mut client = pool.get().await
+            .map_err(|e| {
+                log::error!("Database connection error: {}", e);
+                format!("Database connection error: {}", e)
+            })?;
         
-        // Verify user is a chat member
+        // Log transaction start
+        log::info!("Beginning database transaction");
+        let transaction = client.transaction().await
+            .map_err(|e| {
+                log::error!("Transaction creation error: {}", e);
+                format!("Transaction error: {}", e)
+            })?;
+        
+        // Verify membership
+        log::info!("Checking user membership for chat_id={}, user_id={}", chat_id, sender_id);
         let is_member = ChatRepository::check_user_membership(&transaction, chat_id, sender_id)
             .await
-            .map_err(|e| format!("Membership check failed: {}", e))?;
-            
+            .map_err(|e| {
+                log::error!("Membership check failed: {}", e);
+                format!("Membership check failed: {}", e)
+            })?;
+        
         if !is_member {
+            log::warn!("User {} is not a member of chat {}", sender_id, chat_id);
             return Err("User is not a member of this chat".to_string());
         }
         
-        // Create crypto instance with the chat key
+        // Initialize crypto
+        log::info!("Initializing crypto with key length: {}", chat_key.0.len());
         let crypto = MessageCrypto::new(chat_key)
-            .map_err(|e| format!("Crypto initialization failed: {}", e))?;
+            .map_err(|e| {
+                log::error!("Crypto initialization failed: {}", e);
+                format!("Crypto initialization failed: {}", e)
+            })?;
         
-        // Encrypt the message
-        let encrypted = crypto
-            .encrypt(&message)
-            .map_err(|e| format!("Message encryption failed: {}", e))?;
+        log::info!("Encrypting message with key fingerprint: {}", crypto.key_fingerprint);
         
-        // Store the encrypted message
+        // Encrypt message
+        let encrypted = crypto.encrypt(&message)
+            .map_err(|e| {
+                log::error!("Message encryption failed: {}", e);
+                format!("Message encryption failed: {}", e)
+            })?;
+        
         let message_id = Uuid::new_v4();
-        ChatRepository::insert_encrypted_message(
+        log::info!(
+            "Storing encrypted message: id={}, chat={}, sender={}, fingerprint={}",
+            message_id, chat_id, sender_id, encrypted.key_fingerprint
+        );
+        
+        // Store encrypted message with improved error handling
+        let storage_result = ChatRepository::insert_encrypted_message(
             &transaction,
             message_id,
             chat_id,
             sender_id,
             &encrypted,
-        )
-        .await
-        .map_err(|e| format!("Failed to store encrypted message: {}", e))?;
+        ).await;
         
-        transaction
-            .commit()
-            .await
-            .map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        match storage_result {
+            Ok(_) => {
+                log::info!("Message stored successfully with id={}", message_id);
+            },
+            Err(e) => {
+                log::error!("Failed to store message: {}", e);
+                // Rollback transaction explicitly on error
+                if let Err(rollback_err) = transaction.rollback().await {
+                    log::error!("Failed to rollback transaction: {}", rollback_err);
+                } else {
+                    log::info!("Transaction rolled back successfully");
+                }
+                return Err(format!("Failed to store encrypted message: {}", e));
+            }
+        }
         
-        // Create Message object with the original text
-        let message = Message {
+        // Commit transaction with better error handling
+        log::info!("Committing transaction");
+        let commit_result = transaction.commit().await;
+        if let Err(e) = commit_result {
+            log::error!("Failed to commit transaction: {}", e);
+            return Err(format!("Failed to commit transaction: {}", e));
+        }
+        
+        log::info!("Transaction committed successfully");
+        
+        Ok(Message {
             id: message_id,
             chat_id,
             sender_id,
             message_text: message,
             timestamp: Utc::now().naive_utc(),
-        };
-        
-        Ok(message)
-    }
+        })
+    } */
+    
 
     /// Retrieves and decrypts chat messages for a user
     /// 
@@ -183,81 +225,133 @@ impl ChatService {
         chat_id: Uuid,
         user_id: Uuid,
     ) -> Result<Vec<Message>, String> {
+        log::info!("Getting chat messages for chat={}, user={}", chat_id, user_id);
+        
         let mut client = pool
             .get()
             .await
-            .map_err(|e| format!("Database connection error: {}", e))?;
-    
+            .map_err(|e| {
+                log::error!("Database connection error when getting messages: {}", e);
+                format!("Database connection error: {}", e)
+            })?;
+        
+        log::info!("Beginning transaction for retrieving messages");
         let transaction = client
             .transaction()
             .await
-            .map_err(|e| format!("Transaction error: {}", e))?;
-    
+            .map_err(|e| {
+                log::error!("Transaction error when getting messages: {}", e);
+                format!("Transaction error: {}", e)
+            })?;
+        
         // Verify chat membership
+        log::info!("Checking user membership for reading messages");
         let is_member = ChatRepository::check_user_membership(&transaction, chat_id, user_id)
             .await
-            .map_err(|e| format!("Membership check failed: {}", e))?;
-    
+            .map_err(|e| {
+                log::error!("Membership check failed for reading: {}", e);
+                format!("Membership check failed: {}", e)
+            })?;
+        
         if !is_member {
+            log::warn!("User {} is not a member of chat {} for reading", user_id, chat_id);
             return Err("User is not a member of this chat".to_string());
         }
-    
+        
         // Get all keys for this user and chat
+        log::info!("Retrieving all chat keys for user");
         let all_keys = ChatRepository::get_all_chat_keys(&transaction, chat_id, user_id)
             .await
-            .map_err(|e| format!("Failed to retrieve chat keys: {}", e))?;
-    
+            .map_err(|e| {
+                log::error!("Failed to retrieve chat keys: {}", e);
+                format!("Failed to retrieve chat keys: {}", e)
+            })?;
+        
         if all_keys.is_empty() {
+            log::warn!("No chat keys found for user {} in chat {}", user_id, chat_id);
             return Err("No chat keys found for this user".to_string());
         }
-    
+        
+        log::info!("Found {} chat keys for user", all_keys.len());
+        
         // Create a map of key fingerprints to chat keys
         let mut key_map = std::collections::HashMap::new();
         for key_bytes in all_keys {
             let chat_key = ChatKey(key_bytes.clone());
             let key_fingerprint = format!("{:x}", md5::compute(&key_bytes));
+            log::debug!("Added key with fingerprint: {}", key_fingerprint);
             key_map.insert(key_fingerprint, chat_key);
         }
-    
+        
         // Get encrypted messages
+        log::info!("Retrieving encrypted messages for chat {}", chat_id);
         let encrypted_messages = ChatRepository::get_encrypted_messages(&transaction, chat_id)
             .await
-            .map_err(|e| format!("Failed to retrieve messages: {}", e))?;
-    
+            .map_err(|e| {
+                log::error!("Failed to retrieve messages: {}", e);
+                format!("Failed to retrieve messages: {}", e)
+            })?;
+        
+        log::info!("Retrieved {} encrypted messages", encrypted_messages.len());
+        
         // Decrypt messages
         let mut decrypted_messages = Vec::new();
-        for (id, sender_id, encrypted) in encrypted_messages {
+        let mut decryption_failures = 0;
+        
+        // Use a referência para iterar sobre encrypted_messages 
+        // em vez de consumir a coleção
+        for (id, sender_id, encrypted) in &encrypted_messages {
+            log::debug!("Attempting to decrypt message id={} with fingerprint={}", id, encrypted.key_fingerprint);
+            
             // Use the correct key based on the message's key fingerprint
             if let Some(chat_key) = key_map.get(&encrypted.key_fingerprint) {
                 let crypto = match MessageCrypto::new(chat_key) {
                     Ok(c) => c,
                     Err(e) => {
+                        log::warn!("Failed to initialize crypto for message {}: {}", id, e);
+                        decryption_failures += 1;
                         continue; // Skip messages we can't decrypt
                     }
                 };
-    
+                
                 match crypto.decrypt(&encrypted) {
                     Ok(decrypted_text) => {
+                        log::debug!("Successfully decrypted message id={}", id);
                         decrypted_messages.push(Message {
-                            id,
+                            id: *id,  // Precisamos derreferenciar aqui
                             chat_id,
-                            sender_id,
+                            sender_id: *sender_id,  // Precisamos derreferenciar aqui
                             message_text: decrypted_text,
                             timestamp: Utc::now().naive_utc(),
                         });
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        log::warn!("Failed to decrypt message {}: {}", id, e);
+                        decryption_failures += 1;
                         continue; // Skip messages we can't decrypt
                     }
                 }
+            } else {
+                log::warn!("No key found for fingerprint: {}", encrypted.key_fingerprint);
+                decryption_failures += 1;
             }
         }
-    
+        
+        if decryption_failures > 0 {
+            log::warn!("Failed to decrypt {} out of {} messages", 
+                decryption_failures, encrypted_messages.len());
+        }
+        
+        log::info!("Committing read transaction");
         transaction
             .commit()
             .await
-            .map_err(|e| format!("Failed to commit transaction: {}", e))?;
-    
+            .map_err(|e| {
+                log::error!("Failed to commit read transaction: {}", e);
+                format!("Failed to commit transaction: {}", e)
+            })?;
+        
+        log::info!("Successfully retrieved and decrypted {} messages", decrypted_messages.len());
         Ok(decrypted_messages)
     }
 
