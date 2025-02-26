@@ -17,8 +17,8 @@ pub struct ChatInvitation {
     pub inviter_id: Uuid,
     pub invitee_id: Uuid,
     pub status: String,
-    pub created_at: NaiveDateTime, 
-    pub updated_at: NaiveDateTime, 
+    pub created_at: DateTime<Utc>, // Use DateTime<Utc>
+    pub updated_at: DateTime<Utc>, // Use DateTime<Utc>
 }
 
 

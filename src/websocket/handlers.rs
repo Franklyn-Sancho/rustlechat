@@ -11,10 +11,7 @@ use hyper::{HeaderMap, StatusCode};
 use uuid::Uuid;
 use deadpool_postgres::{Pool, Client};
 use crate::{
-    app_state::AppState,
-    middleware::ws_auth_middleware::WebSocketParams,
-    services::jwt_service::validate_token,
-    websocket::types::ChatMessage,
+    app_state::AppState, crypto::{ChatKey, MessageCrypto}, middleware::ws_auth_middleware::WebSocketParams, repositories::chat_repository::ChatRepository, services::jwt_service::validate_token, websocket::types::ChatMessage
 };
 
 use super::{
@@ -88,6 +85,26 @@ async fn can_user_send_message(
     }
 }
 
+async fn get_or_create_chat_key(db_pool: &Pool, chat_id: Uuid, user_id: Uuid) -> Result<ChatKey, String> {
+    let mut client = db_pool.get().await.map_err(|e| format!("DB error: {}", e))?;
+    let transaction = client.transaction().await.map_err(|e| e.to_string())?;
+
+    // Try to get existing key
+    if let Some(key) = ChatRepository::get_chat_key(&transaction, chat_id, user_id).await
+        .map_err(|e| e.to_string())? {
+        return Ok(ChatKey(key));
+    }
+
+    // Generate new key if none exists
+    let chat_key = MessageCrypto::generate_chat_key();
+    ChatRepository::store_chat_key(&transaction, chat_id, user_id, chat_key.0.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    transaction.commit().await.map_err(|e| e.to_string())?;
+    Ok(chat_key)
+}
+
 // Handles the WebSocket connection once it has been upgraded
 async fn handle_websocket_connection(
     mut socket: WebSocket,
@@ -96,15 +113,9 @@ async fn handle_websocket_connection(
     user_id: Uuid,
 ) {
     let conn_manager = &state.connections;
-    let db_pool = state.db.clone(); // Clone the DB pool from state
+    let db_pool = state.db.clone();
 
-    // Verify if the user is allowed to send messages in the chat
-    if let Err(e) = can_user_send_message(conn_manager, &db_pool, chat_id, user_id).await {
-        eprintln!("{}", e);
-        return; // Close the connection if the user is not authorized
-    }
-
-    // Add the user to the chat (in memory) and get the receiver channel for broadcasted messages
+    // Add user to chat and get receiver
     let mut rx = match conn_manager.add_user_to_chat(chat_id, user_id).await {
         Ok(rx) => rx,
         Err(e) => {
@@ -113,56 +124,91 @@ async fn handle_websocket_connection(
         }
     };
 
-    // Broadcast a status message to notify other users that this user is now online
-    let status_msg = WebSocketMessage::Status(StatusMessage {
-        chat_id,
-        user_id,
-        status: UserStatus::Online,
-        timestamp: Utc::now().naive_utc(),
-    });
-    let _ = conn_manager.broadcast_message(status_msg, chat_id, user_id);
+    // Get or create chat key
+    let chat_key = match get_or_create_chat_key(&db_pool, chat_id, user_id).await {
+        Ok(key) => key,
+        Err(e) => {
+            eprintln!("Failed to get chat key: {}", e);
+            return;
+        }
+    };
 
-    // Main loop to handle incoming and outgoing WebSocket messages
+    // Initialize message crypto
+    let message_crypto = match MessageCrypto::new(&chat_key) {
+        Ok(mc) => mc,
+        Err(e) => {
+            eprintln!("Failed to initialize crypto: {}", e);
+            return;
+        }
+    };
+
     loop {
         tokio::select! {
-            msg = socket.recv() => {
+            Some(msg) = socket.recv() => {
                 match msg {
-                    Some(Ok(msg)) => {
-                        if let Ok(text) = msg.to_text() {
-                            let chat_msg = WebSocketMessage::Chat(ChatMessage {
-                                message_id: Uuid::new_v4(),
-                                chat_id,
-                                sender_id: user_id,
-                                content: text.to_string(),
-                                timestamp: Utc::now().naive_utc(),
-                            });
+                    Ok(Message::Text(text)) => {
+                        // Encrypt message
+                        let encrypted = match message_crypto.encrypt(&text) {
+                            Ok(enc) => enc,
+                            Err(e) => {
+                                eprintln!("Encryption error: {}", e);
+                                continue;
+                            }
+                        };
 
-                            if let Err(e) = conn_manager.broadcast_message(chat_msg, chat_id, user_id) {
-                                eprintln!("Failed to broadcast message: {}", e);
+                        let chat_msg = WebSocketMessage::Chat(ChatMessage {
+                            message_id: Uuid::new_v4(),
+                            chat_id,
+                            sender_id: user_id,
+                            content: encrypted,
+                            timestamp: Utc::now().naive_utc(),
+                        });
+
+                        if let Err(e) = conn_manager.broadcast_message(chat_msg, chat_id, user_id) {
+                            eprintln!("Failed to broadcast: {}", e);
+                            break;
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+            
+            Ok(msg) = rx.recv() => {
+                if let WebSocketMessage::Chat(chat_msg) = msg {
+                    match message_crypto.decrypt(&chat_msg.content) {
+                        Ok(decrypted) => {
+                            if let Err(e) = socket.send(Message::Text(decrypted)).await {
+                                eprintln!("Send error: {}", e);
                                 break;
                             }
                         }
-                    }
-                    Some(Err(e)) => {
-                        eprintln!("WebSocket error: {}", e);
-                        break;
-                    }
-                    None => break,
-                }
-            }
-            Ok(msg) = rx.recv() => {
-                if let WebSocketMessage::Chat(chat_msg) = msg {
-                    if let Err(e) = socket.send(Message::Text(chat_msg.content)).await {
-                        eprintln!("Failed to send message: {}", e);
-                        break;
+                        Err(e) => eprintln!("Decryption error: {}", e)
                     }
                 }
             }
         }
     }
+}
 
-    let _ = conn_manager.update_user_status(chat_id, user_id, UserStatus::Offline);
-    let _ = conn_manager.remove_user_from_chat(chat_id, user_id);
+/// RAII guard to ensure proper cleanup of user connection
+struct CleanupGuard {
+    conn_manager: ConnectionManager,
+    chat_id: Uuid,
+    user_id: Uuid,
+}
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        let _ = self.conn_manager.update_user_status(
+            self.chat_id,
+            self.user_id,
+            UserStatus::Offline
+        );
+        let _ = self.conn_manager.remove_user_from_chat(
+            self.chat_id,
+            self.user_id
+        );
+    }
 }
 
 // Helper function to check if a user is already present in the in-memory representation of a chat

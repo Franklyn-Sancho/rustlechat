@@ -1,4 +1,4 @@
-use tokio_postgres::Client;
+use deadpool_postgres::Client;
 
 // This function applies database migrations, such as creating the database and tables.
 pub async fn apply_migrations(client: &Client) -> Result<(), String> {
@@ -28,103 +28,118 @@ async fn create_database_if_not_exists(client: &Client) {
     }
 }
 
-// This function creates all the necessary tables for the application.
 async fn create_tables(client: &Client) -> Result<(), String> {
-    // Enable the uuid-ossp extension for generating UUIDs, if not already enabled
-    let enable_uuid_extension_query = "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"";
+    // Enable UUID extension
+    let enable_uuid = "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"";
     client
-        .execute(enable_uuid_extension_query, &[])
+        .execute(enable_uuid, &[])
         .await
-        .map_err(|e| format!("Error enabling uuid-ossp extension: {}", e))?;
+        .map_err(|e| format!("Error enabling uuid: {}", e))?;
 
-    // Create the 'users' table
-    let create_users_table_query = "
+    // Users table
+    let create_users = "
         CREATE TABLE IF NOT EXISTS users (
             id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
             username VARCHAR(255) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
-            email VARCHAR(255) NOT NULL UNIQUE
-        )
-    ";
+            email VARCHAR(255) NOT NULL UNIQUE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )";
     client
-        .execute(create_users_table_query, &[])
+        .execute(create_users, &[])
         .await
-        .map_err(|e| format!("Error creating users table: {}", e))?;
+        .map_err(|e| format!("Error creating users: {}", e))?;
 
-    // Create the 'chats' table
-    let create_chats_table_query = "
+    // Chats table
+    let create_chats = "
         CREATE TABLE IF NOT EXISTS chats (
             id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            name VARCHAR(255)
-        )
-    ";
+            name VARCHAR(255),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )";
     client
-        .execute(create_chats_table_query, &[])
+        .execute(create_chats, &[])
         .await
-        .map_err(|e| format!("Error creating chats table: {}", e))?;
+        .map_err(|e| format!("Error creating chats: {}", e))?;
 
-    // Create the 'chat_members' table for the many-to-many relationship between users and chats
-    let create_chat_members_table_query = "
+    // Chat members table
+    let create_members = "
         CREATE TABLE IF NOT EXISTS chat_members (
-            chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            status TEXT NOT NULL,  -- Pode ser 'pending', 'accepted', etc.
+            chat_id UUID REFERENCES chats(id) ON DELETE CASCADE,
+            user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL,
             is_creator BOOLEAN NOT NULL DEFAULT FALSE,
+            joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (chat_id, user_id)
-        );
-    ";
+        )";
     client
-        .execute(create_chat_members_table_query, &[])
+        .execute(create_members, &[])
         .await
-        .map_err(|e| format!("Error creating chat members table: {}", e))?;
+        .map_err(|e| format!("Error creating members: {}", e))?;
 
-    // Create the 'messages' table to store chat messages
-    let create_messages_table_query = "
-        CREATE TABLE IF NOT EXISTS messages (
-            id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-            sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            message_text TEXT NOT NULL,
-            timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    // Chat keys table
+    let create_chat_keys_table = "
+        CREATE TABLE IF NOT EXISTS chat_keys (
+            chat_id UUID REFERENCES chats(id),
+            user_id UUID REFERENCES users(id),
+            encrypted_key BYTEA NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chat_id, user_id)
         )
     ";
-    client
-        .execute(create_messages_table_query, &[])
-        .await
-        .map_err(|e| format!("Error creating messages table: {}", e))?;
 
-    // Create the 'sessions' table to manage user login sessions
-    let create_sessions_table_query = "
+    // Encrypted messages table
+    let create_encrypted_messages_table = "
+        CREATE TABLE IF NOT EXISTS encrypted_messages (
+            id UUID PRIMARY KEY,
+            chat_id UUID REFERENCES chats(id),
+            sender_id UUID REFERENCES users(id),
+            encrypted_content BYTEA NOT NULL,
+            nonce BYTEA NOT NULL,
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (chat_id, sender_id) REFERENCES chat_members(chat_id, user_id)
+        )
+    ";
+
+    // Execute the queries
+    client
+        .batch_execute(&format!(
+            "{}; {};",
+            create_chat_keys_table, create_encrypted_messages_table
+        ))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Sessions table
+    let create_sessions = "
         CREATE TABLE IF NOT EXISTS sessions (
             id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            user_id UUID REFERENCES users(id) ON DELETE CASCADE,
             token TEXT NOT NULL UNIQUE,
-            expires_at TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '30 days')
-        )
-    ";
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )";
     client
-        .execute(create_sessions_table_query, &[])
+        .execute(create_sessions, &[])
         .await
-        .map_err(|e| format!("Error creating sessions table: {}", e))?;
+        .map_err(|e| format!("Error creating sessions: {}", e))?;
 
-    // Create the 'invites' table for managing chat invitations
-    let create_invites_table_query = "
-       CREATE TABLE IF NOT EXISTS invites (
+    // Invites table
+    let create_invites = "
+        CREATE TABLE IF NOT EXISTS invites (
             id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-            inviter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            invitee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            status VARCHAR(20) NOT NULL DEFAULT 'pending', -- 'pending', 'accepted', 'rejected'
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-
-    ";
+            chat_id UUID REFERENCES chats(id) ON DELETE CASCADE,
+            inviter_id UUID REFERENCES users(id) ON DELETE CASCADE,
+            invitee_id UUID REFERENCES users(id) ON DELETE CASCADE,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )";
     client
-        .execute(create_invites_table_query, &[])
+        .execute(create_invites, &[])
         .await
-        .map_err(|e| format!("Error creating invites table: {}", e))?;
+        .map_err(|e| format!("Error creating invites: {}", e))?;
 
     Ok(())
 }
+

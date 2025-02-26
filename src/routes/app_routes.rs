@@ -1,14 +1,11 @@
-// src/router.rs
-
-use std::sync::{Arc, Mutex};
-
+use std::sync::Arc;
 use crate::app_state::AppState;
+use crate::crypto::{MessageCrypto, ChatKey};
 use crate::handlers::auth_handlers;
 use crate::handlers::chat_handlers::{create_chat, get_chat_messages, send_message_handler};
 use crate::handlers::invitation_handlers::respond_to_invitation;
-use crate::middleware::{auth_middleware, ws_auth_middleware};
-use crate::routes::app_routes::auth_middleware::auth_middleware;
-use crate::routes::app_routes::ws_auth_middleware::ws_auth_middleware;
+use crate::middleware::auth_middleware::auth_middleware;
+use crate::middleware::ws_auth_middleware::ws_auth_middleware;
 use crate::websocket::connection_manager::ConnectionManager;
 use crate::websocket::handlers::websocket_handler;
 use axum::middleware::from_fn;
@@ -20,13 +17,26 @@ use deadpool_postgres::Pool;
 use tower_http::trace::TraceLayer;
 
 pub fn create_router(db: Pool) -> Router {
-    // Inicializa o ConnectionManager com o pool de banco de dados
+    // Initialize ConnectionManager with database pool
     let connections = ConnectionManager::new(db.clone());
+    
+    // Generate a new ChatKey for the application
+    let chat_key = ChatKey::generate();
+    
+    // Initialize MessageCrypto with the generated key
+    let crypto = match MessageCrypto::new(&chat_key) {
+        Ok(crypto) => Arc::new(crypto),
+        Err(e) => {
+            eprintln!("Failed to initialize MessageCrypto: {}", e);
+            panic!("Failed to initialize encryption");
+        }
+    };
 
-    // Cria o AppState com o ConnectionManager e o pool de banco de dados
+    // Create AppState with ConnectionManager, database pool and crypto
     let state = AppState {
         connections,
         db,
+        crypto,
         current_user_id: None,
     };
 

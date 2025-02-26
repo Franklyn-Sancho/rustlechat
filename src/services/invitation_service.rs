@@ -1,5 +1,3 @@
-// services/invitation_service.rs
-
 use crate::repositories::invitation_repository::InvitationRepository;
 use crate::models::invitation::{ChatInvitation};
 use uuid::Uuid;
@@ -13,33 +11,41 @@ impl InvitationService {
         InvitationService { repository }
     }
 
-    pub async fn update_invitation_status(
-        &self,
-        invitation_id: Uuid,
-        user_id: Uuid,
-        accepted: bool,
-    ) -> Result<ChatInvitation, String> {
-        let status = if accepted { "accepted" } else { "rejected" };
-        
-        // Lógica de atualização de convite no repositório
-        self.repository.update_invitation_status(invitation_id, user_id, accepted).await
-    }
-
     pub async fn send_invitation(
         &self,
         chat_id: Uuid,
-        inviter_id: Uuid,
+        inviter_id: Uuid, // Deve ser o ID do criador (ex.: frank)
         invitee_username: &str,
     ) -> Result<Uuid, String> {
-        // Busca o ID do usuário baseado no nome
-        let invitee_id = match self.repository.get_user_id_by_username(&invitee_username).await {
-            Ok(Some(id)) => id,
-            Ok(None) => return Err("User not found".to_string()),
-            Err(e) => return Err(e),
-        };
+        // Busca o ID do usuário convidado baseado no username
+        let invitee_id = self
+            .repository
+            .get_user_id_by_username(invitee_username)
+            .await?
+            .ok_or_else(|| "User not found".to_string())?;
 
-        // Envia o convite
-        self.repository.send_invitation(chat_id, inviter_id, invitee_id).await
+        log::debug!(
+            "Enviando convite: chat_id={}, inviter_id={}, invitee_id={}",
+            chat_id,
+            inviter_id,
+            invitee_id
+        );
+
+        // Cria o convite com os parâmetros na ordem correta
+        self.repository
+            .send_invitation(chat_id, inviter_id, invitee_id)
+            .await
+    }
+
+    pub async fn update_invitation_status(
+        &self,
+        invitation_id: Uuid,
+        user_id: Uuid, // Deve ser o ID do convidado (invitee) respondendo
+        accepted: bool,
+    ) -> Result<ChatInvitation, String> {
+        self.repository
+            .update_invitation_status(invitation_id, user_id, accepted)
+            .await
     }
 
     pub async fn add_user_to_chat(
@@ -50,6 +56,7 @@ impl InvitationService {
         self.repository.insert_user_to_chat(chat_id, user_id).await
     }
 }
+
 
 
 

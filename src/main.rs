@@ -9,6 +9,7 @@ mod websocket;
 mod app_state;
 mod repositories;
 mod utils;
+mod crypto;
 
 // Import required functions and types
 use database::init::init_db;

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::Client;
 use uuid::Uuid;
 
-use crate::models::invitation::InvitationNotification;
+use crate::{crypto::EncryptedMessage, models::invitation::InvitationNotification};
 
 use super::connection_manager::ConnectionManager;
 
@@ -28,12 +28,12 @@ pub struct AppState {
     pub current_user_id: Option<Uuid>,
 } */
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub message_id: Uuid,
     pub chat_id: Uuid,
     pub sender_id: Uuid,
-    pub content: String,
+    pub content: EncryptedMessage,
     pub timestamp: NaiveDateTime,
 }
 
